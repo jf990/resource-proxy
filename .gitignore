@@ -66,4 +66,8 @@ $RECYCLE.BIN/
 
 # Windows shortcuts
 *.lnk
+
+node_modules/
+*.log
+
 # Created by .ignore support plugin (hsz.mobi)
