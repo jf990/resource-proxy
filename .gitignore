@@ -69,5 +69,6 @@ $RECYCLE.BIN/
 
 node_modules/
 *.log
+*.sqlite
 
 # Created by .ignore support plugin (hsz.mobi)
