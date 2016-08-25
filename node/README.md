@@ -6,7 +6,7 @@ This is an implementation of the proxy server using node.js as the server. The p
 * Accessing resources secured with token based authentication.
 * [OAuth 2.0 app logins](https://developers.arcgis.com/en/authentication).
 * Enabling logging
-* Both resource and referer based rate limiting
+* Both resource and referrer based rate limiting
 
 ## Instructions
 

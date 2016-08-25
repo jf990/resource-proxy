@@ -4,10 +4,13 @@
         "useHTTPS": false,
         "mustMatch": true,
         "logLevel": "ALL",
+        "logToConsole": true,
         "logFileName": "arcgis-proxy-node.log",
         "logFilePath": "./",
         "listenURI": ["/proxy", "/sproxy"],
-        "allowedReferrers": ["*"]
+        "pingPath": "/ping",
+        "statusPath": "/status",
+        "allowedReferrers": "*"
     },
     "serverUrls": [
         {
@@ -31,6 +34,13 @@
             "matchAll": true
         },
         {
+            "url": "geo.arcgis.com/ArcGIS/rest/info/",
+            "hostRedirect": "http://services.arcgisonline.com",
+            "rateLimit": "120",
+            "rateLimitPeriod": "1",
+            "matchAll": true
+        },
+        {
             "url": "http://route.arcgis.com",
             "oauth2Endpoint": "https://www.arcgis.com/sharing/oauth2",
             "clientId": "6Xo1d-example-9Kn2",
@@ -42,6 +52,10 @@
         {
             "url": "http://services.arcgisonline.com/ArcGIS/rest/services/",
             "matchAll": false
+        },
+        {
+            "url": "http://maps.lakecountyil.gov/arcgis/rest/services/PublicWorks/PWCommonLayers/FeatureServer/14",
+            "matchAll": true
         }
     ]
 }
