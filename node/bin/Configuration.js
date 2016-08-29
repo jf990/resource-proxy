@@ -1,6 +1,8 @@
 /**
  * Configuration file parser, validator, and accessor. Calling loadConfigurationFile returns a promise that will
  * resolve once the config is loaded, parsed, and validated.
+ *
+ * See README for the configuration file format.
  */
 
 const loadJsonFile = require('load-json-file');

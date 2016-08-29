@@ -106,25 +106,26 @@ function getServerUrlInfo (urlRequestedParts) {
 
 /**
  * Determine if the URI requested is one of the URIs we are supposed to be listening for in listenURI[].
- * Since on the node.js server we can listen on any URI request we must specify the path we will accept.
+ * On the node.js server we can listen on any URI request we must specify the path we will accept.
  * If mustMatch is false then we will listen for anything! (Not sure if this is really useful.)
  * @param uri the uri that is being requested. Look this up in the serviceURLs table to make sure it is
- *    something we are supposed to service.
- * @returns {String} '' if valid request, otherwise a reason message why it was rejected.
+ *    something we are supposed to service. Matching is not case sensitive.
+ * @returns {boolean} true if valid request.
  */
 function isValidURLRequest (uri) {
-    var reason = '',
+    var isMatch = false,
+        uriCheckFor = uri.toLowerCase(),
         i;
 
     if (configuration.mustMatch) {
         for (i = 0; i < configuration.listenURI.length; i ++) {
-            if (uri.toLowerCase() == configuration.listenURI[i].toLowerCase()) {
-                reason = 'no matching service url for "' + uri + '".';
+            if (uriCheckFor == configuration.listenURI[i].toLowerCase()) {
+                isMatch = true;
                 break;
             }
         }
     }
-    return reason;
+    return isMatch;
 }
 
 function getNewTokenIfCredentialsAreSpecified(serverURLInfo, requestUrl) {
@@ -459,8 +460,7 @@ function processRequest (request, response) {
                 if (requestParts.listenPath == configuration.localStatusURL) {
                     sendStatusResponse(referrer, response);
                 } else {
-                    rejectionReason = isValidURLRequest(requestParts.proxyPath);
-                    if (rejectionReason == '') {
+                    if (isValidURLRequest(requestParts.listenPath)) {
                         serverURLInfo = getServerUrlInfo(requestParts);
                         if (serverURLInfo != null) {
                             if (serverURLInfo.useRateMeter) {
@@ -485,11 +485,11 @@ function processRequest (request, response) {
                             sendErrorResponse(request.url, response, 404, 'Resource ' + request.url + ' not found.');
                         }
                     } else {
-                        sendErrorResponse(request.url, response, 403, rejectionReason);
+                        sendErrorResponse(request.url, response, 403, 'no matching service url for ' + requestParts.listenPath + '.');
                     }
                 }
             } else {
-                sendErrorResponse(request.url, response, 403, 'referrer "' + referrer + '" not allowed.');
+                sendErrorResponse(request.url, response, 403, 'referrer ' + referrer + ' not allowed.');
             }
         }
     } else {

@@ -30,7 +30,7 @@ module.exports = function (serverURLs, allowedReferrers, logFunction) {
      * about how the app wants to handle logging.
      * @param fromWhere {string} an indication where in this module the error occurred.
      * @param sql {string|null} the sql query if you want to show it in the log
-     * @param params {Array|scalar|null} the parameters provided to the sql query
+     * @param params {Array|string|null} the parameters provided to the sql query
      * @param databaseError {Exception|null} the error object, if not null then must support toString()
      */
     function logDatabaseError(fromWhere, sql, params, databaseError) {
@@ -137,7 +137,7 @@ module.exports = function (serverURLs, allowedReferrers, logFunction) {
      */
     function openDatabase() {
         if (dbConnection == null) {
-            isNewDatabase = false; // ! fs.accessSync(dbName, dbFileAccessMode);
+            isNewDatabase = false; // ! fs.accessSync(dbName, dbFileAccessMode); // TODO: why does this fail?
             dbConnection = new sqlite3.Database(dbName, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, createDatabaseIfNotExists);
             if (dbConnection != null) {
                 if (isNewDatabase) {
