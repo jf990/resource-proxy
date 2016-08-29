@@ -3,16 +3,20 @@
  * of functionality and configuration.
  *
  * John's to-do list:
- * * test hostRedirect test with http://local.arcgis.com:3333/proxy/geo.arcgis.com/ArcGIS/rest/info/
- * * GET making sure all the query parameters are correct
- * * POST
- * * FILES
+ * X test hostRedirect test with http://local.arcgis.com:3333/proxy/geo.arcgis.com/ArcGIS/rest/info/
+ * * http://route.arcgis.com/arcgis/rest/services/World/ClosestFacility/NAServer/ClosestFacility_World/solveClosestFacility => http://local.arcgis.com:3333/proxy/http/route.arcgis.com/arcgis/rest/services/World/ClosestFacility/NAServer/ClosestFacility_World/solveClosestFacility?f=json
+ *
+ * * transform application/vnd.ogc.wms_xml to text/xml
+ * * Resolving query parameters, combining query parameters from serverURL and request then replacing token
  * * adding token to request without a token
  * * replace token to a request that has a token but we dont want to use it
- * * If proxied request fails due to 499/498/403, catching that and retry with credentials or refresh token
+ * * If proxied request fails due to 499/498, catching that and retry with credentials or refresh token
  * * username/password
  * * tokenServiceUri
  * * oauth, clientId, clientSecret, oauthEndpoint, accessToken
+ * * GET making sure all the query parameters are correct
+ * * POST
+ * * FILES
  */
 
 const proxyVersion = "0.1.3";
@@ -20,30 +24,16 @@ const http = require('http');
 const https = require('https');
 const httpProxy = require('http-proxy');
 const fs = require('fs');
-const loadJsonFile = require('load-json-file');
 const RateMeter = require('./RateMeter');
 const ProjectUtilities = require('./ProjectUtilities');
 const QuickLogger = require('./QuickLogger');
 const UrlFlexParser = require('./UrlFlexParser');
+const Configuration = require('./Configuration');
 
 
-var defaultConfigurationFile = 'conf/config.json';
-var configuration = {
-    mustMatch: true,
-    logLevel: QuickLogger.LOGLEVEL.ERROR.value,
-    logConsole: true,
-    localPingURL: '/ping',
-    localStatusURL: '/status',
-    port: 3333, // 80
-    useHTTPS: false,
-    httpsKeyFile: null,
-    httpsCertificateFile: null,
-    httpsPfxFile: null,
-    listenURI: null,
-    allowedReferrers: ['*'],
-    allowAnyReferrer: false,
-    serverURLs: []
-};
+const defaultOAuthEndPoint = 'https://www.arcgis.com/sharing/oauth2/';
+
+var configuration = Configuration.configuration;
 var httpServer;
 var proxyServer;
 var rateMeter = null;
@@ -54,274 +44,6 @@ var errorProcessedRequests = 0;
 var configurationComplete = false;
 var waitingToRunIntegrationTests = false;
 
-
-/**
- * Determine if the configuration is valid enough to start the server. If it is not valid any reasons are
- * written to the log file and the server is not started.
- * @returns {boolean} true if valid enough.
- */
-function isConfigurationValid () {
-    var isValid;
-    // allowedReferrers != empty
-    // port >= 80 <= 65535
-    // either httpsKeyFile && httpsCertificateFile or httpsPfxFile
-    // at least one serverUrls
-    isValid = QuickLogger.setConfiguration(configuration);
-    if (configuration.listenURI == null) {
-        QuickLogger.logErrorEvent('No URI was set to listen for. Indicate a URI path on your server, for example /proxy');
-        isValid = false;
-    } else if (configuration.listenURI.length == 0) {
-        QuickLogger.logErrorEvent('No URI was set to listen for. Indicate a URI path on your server, for example /proxy');
-        isValid = false;
-    }
-    if (configuration.serverUrls == null) {
-        QuickLogger.logErrorEvent('You must configure serverUrls.');
-        isValid = false;
-    } else if (configuration.serverUrls.length == 0) {
-        QuickLogger.logErrorEvent('You must configure serverUrls for at least one service.');
-        isValid = false;
-    }
-    // TODO: We do not validate the individual server URLs but maybe we should?
-    if (configuration.allowedReferrers == null) {
-        configuration.allowedReferrers = ['*'];
-        QuickLogger.logWarnEvent('You should configure allowedReferrers to at least one referrer, use ["*"] to accept all connections. Defaulting to ["*"].');
-    } else if (configuration.allowedReferrers.length == 0) {
-        configuration.allowedReferrers = ['*'];
-        QuickLogger.logWarnEvent('You should configure allowedReferrers to at least one referrer, use ["*"] to accept all connections. Defaulting to ["*"].');
-    }
-    return isValid;
-}
-
-/**
- * Load the configuration file and process it by copying anything that looks valid into our
- * internal configuration object. This function loads asynchronously so it returns before the
- * file is loaded or processed.
- * @param configFile {string} path to the configuration file.
- */
-function loadConfigurationFile (configFile) {
-    var allowedReferrers,
-        referrerToCheckParts,
-        referrerValidated,
-        serverUrls,
-        serverUrl,
-        urlParts,
-        logLevel,
-        i;
-
-    if (configFile == undefined || configFile == null || configFile.length == 0) {
-        configFile = defaultConfigurationFile;
-    }
-    loadJsonFile(configFile).then(function (json) {
-        if (json !== null) {
-            if (json.proxyConfig !== null) {
-                if (json.proxyConfig.useHTTPS !== null) {
-                    configuration.useHTTPS = json.proxyConfig.useHTTPS;
-                }
-                if (json.proxyConfig.port !== null) {
-                    configuration.port = json.proxyConfig.port;
-                }
-                if (json.proxyConfig.mustMatch !== null) {
-                    if (typeof json.proxyConfig.mustMatch === 'string') {
-                        configuration.mustMatch = json.proxyConfig.mustMatch.toLocaleLowerCase().trim() === 'true' || json.proxyConfig.mustMatch === '1';
-                    } else {
-                        configuration.mustMatch = json.proxyConfig.mustMatch;
-                    }
-                } else {
-                    configuration.mustMatch = true;
-                }
-                if (json.proxyConfig.matchAllReferrer !== null) {
-                    if (typeof json.proxyConfig.matchAllReferrer === 'string') {
-                        configuration.matchAllReferrer = json.proxyConfig.matchAllReferrer.toLocaleLowerCase().trim() === 'true' || json.proxyConfig.matchAllReferrer === '1';
-                    } else {
-                        configuration.matchAllReferrer = json.proxyConfig.matchAllReferrer;
-                    }
-                } else {
-                    configuration.matchAllReferrer = true;
-                }
-                if (json.proxyConfig.logFileName !== null) {
-                    configuration.logFileName = json.proxyConfig.logFileName;
-                }
-                if (json.proxyConfig.logFilePath !== null) {
-                    configuration.logFilePath = json.proxyConfig.logFilePath;
-                }
-                if (json.proxyConfig.logLevel !== null) {
-                    for (logLevel in QuickLogger.LOGLEVEL) {
-                        if (QuickLogger.LOGLEVEL.hasOwnProperty(logLevel)) {
-                            if (QuickLogger.LOGLEVEL[logLevel].label == json.proxyConfig.logLevel.toUpperCase()) {
-                                configuration.logLevel = QuickLogger.LOGLEVEL[logLevel].value;
-                                break;
-                            }
-                        }
-                    }
-                }
-                if (json.proxyConfig.logToConsole !== null) {
-                    if (typeof json.proxyConfig.logToConsole === 'string') {
-                        configuration.logToConsole = json.proxyConfig.logToConsole.toLocaleLowerCase().trim() === 'true' || json.proxyConfig.logToConsole === '1';
-                    } else {
-                        configuration.logToConsole = json.proxyConfig.logToConsole == true;
-                    }
-                } else {
-                    configuration.logToConsole = false;
-                }
-                // allowedReferrers can be a single string, items separated with comma, or an array of strings.
-                // Make sure we end up with an array of strings.
-                if (json.proxyConfig.allowedReferrers !== null) {
-                    if (Array.isArray(json.proxyConfig.allowedReferrers)) {
-                        allowedReferrers = json.proxyConfig.allowedReferrers.slice();
-                    } else if (json.proxyConfig.allowedReferrers.indexOf(',') >= 0) {
-                        allowedReferrers = json.proxyConfig.allowedReferrers.split(',');
-                    } else {
-                        allowedReferrers = [json.proxyConfig.allowedReferrers];
-                    }
-                    // make a cache of the allowed referrers so checking at runtime is easier and avoids parsing the referrer on each lookup
-                    configuration.allowedReferrers = [];
-                    for (i = 0; i < allowedReferrers.length; i ++) {
-                        referrerValidated = {
-                            protocol: '*',
-                            hostname: '*',
-                            path: '*',
-                            referrer: '*'
-                        };
-                        if (allowedReferrers[i] == "*") {
-                            // TODO: this may not be necessary because when we match a * we don't check the individual parts
-                            configuration.allowAnyReferrer = true;
-                            configuration.allowedReferrers.push(referrerValidated);
-                        } else {
-                            referrerToCheckParts = UrlFlexParser.parseAndFixURLParts(allowedReferrers[i].toLowerCase().trim());
-                            if (referrerToCheckParts.protocol != null) {
-                                referrerValidated.protocol = referrerToCheckParts.protocol;
-                            }
-                            if (referrerToCheckParts.hostname != null) {
-                                referrerValidated.hostname = referrerToCheckParts.hostname;
-                                referrerValidated.path = referrerToCheckParts.path;
-                            } else {
-                                referrerValidated.hostname = referrerToCheckParts.path;
-                            }
-                            referrerValidated.referrer = fullURLFromParts(referrerValidated); // used for the database key for this referrer match
-                            configuration.allowedReferrers.push(referrerValidated);
-                        }
-                    }
-                }
-                if (configuration.useHTTPS) {
-                    if (json.proxyConfig.httpsKeyFile !== null) {
-                        configuration.httpsKeyFile = json.proxyConfig.httpsKeyFile;
-                    }
-                    if (json.proxyConfig.httpsCertificateFile !== null) {
-                        configuration.httpsCertificateFile = json.proxyConfig.httpsCertificateFile;
-                    }
-                    if (json.proxyConfig.httpsPfxFile !== null) {
-                        configuration.httpsPfxFile = json.proxyConfig.httpsPfxFile;
-                    }
-                }
-                // listenURI can be a single string or an array of strings
-                if (json.proxyConfig.listenURI !== null) {
-                    if (Array.isArray(json.proxyConfig.listenURI)) {
-                        configuration.listenURI = json.proxyConfig.listenURI.slice();
-                    } else {
-                        configuration.listenURI = [json.proxyConfig.listenURI];
-                    }
-                }
-                if (json.proxyConfig.pingPath !== null) {
-                    configuration.localPingURL = json.proxyConfig.pingPath;
-                }
-                if (json.proxyConfig.statusPath !== null) {
-                    configuration.localStatusURL = json.proxyConfig.statusPath;
-                }
-                // serverURLs is an array of objects
-                if (json.serverUrls != null) {
-                    if (Array.isArray(json.serverUrls)) {
-                        serverUrls = json.serverUrls.slice(); // if array copy the array
-                    } else {
-                        serverUrls = [json.serverUrls]; // if single object make it an array of 1
-                    }
-                    // iterate the array of services and validate individual settings
-                    for (i = 0; i < serverUrls.length; i ++) {
-                        serverUrl = serverUrls[i];
-                        // if the config file uses the old format {serverUrls: { serverUrl: { ... }} then convert it to the newer format.
-                        if (serverUrl.serverUrl !== undefined) {
-                            serverUrl = serverUrl.serverUrl;
-                        }
-                        urlParts = UrlFlexParser.parseAndFixURLParts(serverUrl.url);
-                        if (urlParts != null) {
-                            serverUrl.protocol = urlParts.protocol;
-                            serverUrl.hostname = urlParts.hostname;
-                            serverUrl.path = urlParts.path;
-                            serverUrl.port = urlParts.port;
-                            if (serverUrl.protocol == null || serverUrl.protocol == '') {
-                                serverUrl.protocol = '*';
-                            }
-                            if (serverUrl.protocol.charAt(serverUrl.protocol.length - 1) == ':') {
-                                serverUrl.protocol = serverUrl.protocol.substr(0, serverUrl.protocol.length - 1);
-                            }
-                            if (serverUrl.hostname == null || serverUrl.hostname == '') {
-                                serverUrl.hostname = serverUrl.path;
-                                serverUrl.path = '*';
-                            }
-                            if (serverUrl.port == null || serverUrl.port == '') {
-                                serverUrl.port = '*';
-                            }
-                        }
-                        if (serverUrl.matchAll != undefined) {
-                            if (typeof serverUrl.matchAll === 'string') {
-                                serverUrl.matchAll = serverUrl.matchAll.toLocaleLowerCase().trim() === 'true' || serverUrl.matchAll == '1';
-                            }
-                        } else {
-                            serverUrl.matchAll = true;
-                        }
-                        if (serverUrl.rateLimit != undefined) {
-                            serverUrl.rateLimit = parseInt(serverUrl.rateLimit);
-                            if (serverUrl.rateLimit < 0) {
-                                serverUrl.rateLimit = 0;
-                            }
-                        } else {
-                            serverUrl.rateLimit = 0;
-                        }
-                        if (serverUrl.rateLimitPeriod != undefined) {
-                            serverUrl.rateLimitPeriod = parseInt(serverUrl.rateLimitPeriod);
-                            if (serverUrl.rateLimitPeriod < 0) {
-                                serverUrl.rateLimitPeriod = 0;
-                            }
-                        } else {
-                            serverUrl.rateLimitPeriod = 0;
-                        }
-                        if (serverUrl.rateLimit > 0 && serverUrl.rateLimitPeriod > 0) {
-                            serverUrl.useRateMeter = true;
-                            serverUrl.rate = serverUrl.rateLimit / serverUrl.rateLimitPeriod / 60; // how many we give out per second
-                            serverUrl.ratePeriodSeconds = 1 / serverUrl.rate; // how many seconds in 1 rate period
-                        } else {
-                            serverUrl.useRateMeter = false;
-                            serverUrl.rate = 0;
-                            serverUrl.ratePeriodSeconds = 0;
-                        }
-                        // TODO: Should we attempt to validate any of the following parameters?
-                        // hostRedirect;
-                        // oauth2Endpoint;
-                        // domain;
-                        // username;
-                        // password;
-                        // clientId;
-                        // clientSecret;
-                        // accessToken;
-                        // tokenParamName;
-                    }
-                    configuration.serverUrls = serverUrls;
-                }
-            }
-        }
-        // TODO: Chain promise
-        configurationComplete = true;
-        if (isConfigurationValid()) {
-            configuration.logFunction = QuickLogger.logEvent.bind(QuickLogger);
-            UrlFlexParser.setConfiguration(configuration);
-            startServer();
-        } else {
-            QuickLogger.logErrorEvent("!!! Server not started due to invalid configuration. !!!");
-            process.exit();
-        }
-    }, function (error) {
-        QuickLogger.logErrorEvent("!!! Server not started due to invalid configuration file format. " + error.toString() + " !!!");
-    });
-}
 
 /**
  * Look up the urlRequested in the serverUrls configuration and return the matching object.
@@ -405,20 +127,78 @@ function isValidURLRequest (uri) {
     return reason;
 }
 
-function isUserLogin (serverURLInfo) {
-    if (serverURLInfo != null) {
-        return serverURLInfo.username != null && serverURLInfo.username.length > 0 && serverURLInfo.password != null && serverURLInfo.password.length > 0;
-    } else {
-        return false;
+function getNewTokenIfCredentialsAreSpecified(serverURLInfo, requestUrl) {
+    var newToken = null;
+
+    if (serverURLInfo.isAppLogin) {
+    //    //OAuth 2.0 mode authentication
+    //    //"App Login" - authenticating using client_id and client_secret stored in config
+    //    serverURLInfo.OAuth2Endpoint = string.IsNullOrEmpty(serverURLInfo.OAuth2Endpoint) ? DEFAULT_OAUTH : serverURLInfo.OAuth2Endpoint;
+    //    if (serverURLInfo.OAuth2Endpoint[serverURLInfo.OAuth2Endpoint.Length - 1] != '/') {
+    //        serverURLInfo.OAuth2Endpoint += "/";
+    //    }
+    //    log(TraceLevel.Info, "Service is secured by " + serverURLInfo.OAuth2Endpoint + ": getting new token...");
+    //    var uri = serverURLInfo.OAuth2Endpoint + "token?client_id=" + serverURLInfo.ClientId + "&client_secret=" + serverURLInfo.ClientSecret + "&grant_type=client_credentials&f=json";
+    //    var tokenResponse = webResponseToString(doHTTPRequest(uri, "POST"));
+    //    token = extractToken(tokenResponse, "token");
+    //    if (!string.IsNullOrEmpty(token))
+    //        token = exchangePortalTokenForServerToken(token, serverURLInfo);
+    } else if (serverURLInfo.isUserLogin) {
+    //        // standalone ArcGIS Server/ArcGIS Online token-based authentication
+    //
+    //        //if a request is already being made to generate a token, just let it go
+    //        if (requestUrl.ToLower().Contains("/generatetoken")) {
+    //            var tokenResponse = webResponseToString(doHTTPRequest(requestUrl, "POST"));
+    //            token = extractToken(tokenResponse, "token");
+    //            return token;
+    //        }
+    //
+    //        //lets look for '/rest/' in the requested URL (could be 'rest/services', 'rest/community'...)
+    //        if (reqUrl.ToLower().Contains("/rest/"))
+    //            infoUrl = requestUrl.Substring(0, requestUrl.IndexOf("/rest/", StringComparison.OrdinalIgnoreCase));
+    //
+    //        //if we don't find 'rest', lets look for the portal specific 'sharing' instead
+    //        else if (reqUrl.ToLower().Contains("/sharing/")) {
+    //            infoUrl = requestUrl.Substring(0, requestUrl.IndexOf("/sharing/", StringComparison.OrdinalIgnoreCase));
+    //            infoUrl = infoUrl + "/sharing";
+    //        }
+    //        else
+    //            throw new ApplicationException("Unable to determine the correct URL to request a token to access private resources.");
+    //
+    //        if (infoUrl != "") {
+    //            log(TraceLevel.Info," Querying security endpoint...");
+    //            infoUrl += "/rest/info?f=json";
+    //            //lets send a request to try and determine the URL of a token generator
+    //            string infoResponse = webResponseToString(doHTTPRequest(infoUrl, "GET"));
+    //            String tokenServiceUri = getJsonValue(infoResponse, "tokenServicesUrl");
+    //            if (string.IsNullOrEmpty(tokenServiceUri)) {
+    //                string owningSystemUrl = getJsonValue(infoResponse, "owningSystemUrl");
+    //                if (!string.IsNullOrEmpty(owningSystemUrl)) {
+    //                    tokenServiceUri = owningSystemUrl + "/sharing/generateToken";
+    //                }
+    //            }
+    //            if (tokenServiceUri != "") {
+    //                log(TraceLevel.Info," Service is secured by " + tokenServiceUri + ": getting new token...");
+    //                string uri = tokenServiceUri + "?f=json&request=getToken&referer=" + PROXY_REFERER + "&expiration=60&username=" + serverURLInfo.Username + "&password=" + serverURLInfo.Password;
+    //                string tokenResponse = webResponseToString(doHTTPRequest(uri, "POST"));
+    //                token = extractToken(tokenResponse, "token");
+    //            }
+    //        }
+    //    }
     }
+    return newToken;
 }
 
-function isAppLogin (serverURLInfo) {
-    if (serverURLInfo != null) {
-        return serverURLInfo.clientid != null && serverURLInfo.clientid.length > 0 && serverURLInfo.clientsecret != null && serverURLInfo.clientsecret.length > 0;
-    } else {
-        return false;
-    }
+function exchangePortalTokenForServerToken(portalToken, serverURLInfo) {
+    // ideally, we should POST the token request
+    var parameters = {
+        token: portalToken,
+        serverURL: serverURLInfo.url,
+        f: "json"
+    };
+    var uri = serverURLInfo.oauth2endpoint.replace('/oauth2', '/generateToken');
+    var tokenResponse = webResponseToString(doHTTPRequest(uri, "GET"));
+    return ProjectUtilities.findTokenInString(tokenResponse, 'token');
 }
 
 /**
@@ -442,11 +222,10 @@ function processValidatedRequest (urlRequestedParts, serverURLInfo, referrer, re
         // TODO: Handle Auth, oauth, GET/POST/FILES
 
         if (proxyServer != null) {
-            if (ProjectUtilities.isPropertySet(serverURLInfo, 'hostRedirect')) {
+            if (serverURLInfo.isHostRedirect) {
                 // Host Redirect means we want to replace the host used in the request with a different host, but keep
                 // everything else received in the request (path, query).
-                // TODO: probably should do this at config time not on every request.
-                parsedHostRedirect = UrlFlexParser.parseAndFixURLParts(serverURLInfo.hostRedirect);
+                parsedHostRedirect = serverURLInfo.parsedHostRedirect;
                 parsedProxy = UrlFlexParser.parseAndFixURLParts(urlRequestedParts.proxyPath);
                 parsedProxy.hostname = parsedHostRedirect.hostname;
                 parsedProxy.protocol = UrlFlexParser.getBestMatchProtocol(referrer, parsedProxy, parsedHostRedirect);
@@ -461,13 +240,16 @@ function processValidatedRequest (urlRequestedParts, serverURLInfo, referrer, re
             // proxied service
             request.url = proxyRequest;
             request.headers.host = hostname;
+
+            // TODO: IFF a token based request we should check if the toekn we have is any good and if not generate a new token
+
             // TODO: Not really sure this worked if the proxy generates an error as we are not catching any error from the proxied service
             validProcessedRequests ++;
             QuickLogger.logInfoEvent("Issuing proxy request [" + request.method + "](" + request.url + ") for " + proxyRequest);
             proxyServer.web(request, response, {
                 target: proxyRequest,
                 ignorePath: true
-            });
+            }, proxyResponseError);
         }
     } else {
         statusCode = 403;
@@ -658,8 +440,7 @@ function processRequest (request, response) {
     var requestParts = UrlFlexParser.parseURLRequest(request.url, configuration.listenURI),
         serverURLInfo,
         rejectionReason,
-        referrer,
-        proxyReferrer;
+        referrer;
 
     attemptedRequests ++;
     if (requestParts != null) {
@@ -669,18 +450,17 @@ function processRequest (request, response) {
         } else {
             referrer = referrer.toLowerCase().trim();
         }
-        QuickLogger.logInfoEvent('---- New request from ' + referrer + ' for ' + requestParts.listenPath + ' ----');
+        QuickLogger.logInfoEvent('---- New request from ' + referrer + ' for ' + requestParts.proxyPath + ' ----');
         if (requestParts.listenPath == configuration.localPingURL) {
             sendPingResponse(referrer, response);
         } else {
-            referrer = UrlFlexParser.validatedReferrerFromReferrer(referrer);
+            referrer = UrlFlexParser.validatedReferrerFromReferrer(referrer, configuration.allowedReferrers);
             if (referrer != null) {
                 if (requestParts.listenPath == configuration.localStatusURL) {
                     sendStatusResponse(referrer, response);
                 } else {
                     rejectionReason = isValidURLRequest(requestParts.proxyPath);
                     if (rejectionReason == '') {
-                        proxyReferrer = request.headers['referer'];
                         serverURLInfo = getServerUrlInfo(requestParts);
                         if (serverURLInfo != null) {
                             if (serverURLInfo.useRateMeter) {
@@ -718,13 +498,58 @@ function processRequest (request, response) {
 }
 
 /**
- * Run the server. This function never returns. You have to kill the process, such as ^C.
+ * If the proxy target responds with an error we catch it here.
+ * @param error
+ */
+function proxyResponseError(error, proxyRequest, proxyResponse, proxyTarget) {
+    QuickLogger.logErrorEvent('proxyResponseError caught error ' + error.code + ': ' + error.description + ' on ' + proxyTarget + ' status=' + proxyResponse.status);
+}
+
+/**
+ * If the proxy target responds with an error we catch it here. I believe this is only for socket errors
+ * as I have yet to catch any errors here.
+ * @param proxyError
+ */
+function proxyErrorHandler(proxyError, proxyRequest, proxyResponse) {
+    sendErrorResponse(proxyRequest.url, proxyResponse, 500, 'Proxy error ' + proxyError.toString());
+}
+
+/**
+ * The proxy service gives us a change to alter the request before forwarding it to the proxied server.
+ * @param proxyReq
+ * @param proxyRequest
+ * @param proxyResponse
+ * @param options
+ */
+function proxyRequestRewrite(proxyReq, proxyRequest, proxyResponse, options) {
+    QuickLogger.logInfoEvent("proxyRequestRewrite opportunity to alt request before contacting service.");
+}
+/**
+ * The proxy service gives us a chance to alter the response before sending it back to the client.
+ * @param proxyRes
+ * @param proxyRequest
+ * @param proxyResponse
+ * @param options
+ */
+function proxyResponseRewrite(proxyRes, proxyRequest, proxyResponse, options) {
+    // TODO: Read the stream and see if we get error 498/499. if so we need to generate a token.
+    if (proxyRes.headers['content-type'] !== undefined) {
+        var lookFor = 'application/vnd.ogc.wms_xml';
+        var replaceWith = 'text/xml';
+        proxyRes.headers['content-type'] = proxyRes.headers['content-type'].replace(lookFor, replaceWith);
+    }
+    QuickLogger.logInfoEvent("proxyResponseRewrite opportunity to alt response before writing it.");
+}
+
+/**
+ * Run the server. This function never returns. You have to kill the process, such as ^C or kill.
  * All connection requests are forwarded to processRequest(q, r).
  */
 function startServer () {
     var httpsOptions,
         proxyServerOptions = {};
 
+    UrlFlexParser.setConfiguration(configuration);
     serverStartTime = new Date();
     QuickLogger.logInfoEvent("Starting " + (configuration.useHTTPS ? 'HTTPS' : 'HTTP') + " server on port " + configuration.port + " -- " + serverStartTime.toLocaleString());
 
@@ -755,9 +580,9 @@ function startServer () {
             socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
         });
         proxyServer = new httpProxy.createProxyServer(proxyServerOptions);
-        proxyServer.on('error', function (proxyError, proxyRequest, proxyResponse) {
-            sendErrorResponse(proxyRequest.url, proxyResponse, 500, 'Proxy error ' + proxyError.toString());
-        });
+        proxyServer.on('error', proxyErrorHandler);
+        proxyServer.on('proxyReq', proxyRequestRewrite);
+        proxyServer.on('proxyRes', proxyResponseRewrite);
 
         if (waitingToRunIntegrationTests) {
             __runIntegrationTests();
@@ -765,6 +590,15 @@ function startServer () {
 
         httpServer.listen(configuration.port);
     }
+}
+
+/**
+ * When loading the configuration fails we end up here with a reason message. We terminate the app.
+ * @param reason {Error} hopefully a message indicating why the configuration failed.
+ */
+function cannotStartServer(reason) {
+    QuickLogger.logErrorEvent("!!! Server not started due to invalid configuration. " + reason.message);
+    process.exit();
 }
 
 /**
@@ -804,7 +638,8 @@ function configProcessHandlers(process) {
 
 /**
  * Run any tests that require our server is up and running. Waits for the server to be up and running
- * before scheduling the tests.
+ * before scheduling the tests. These tests are here because the functions were not exported and not
+ * accessible to the unit/integration test object.
  */
 function runIntegrationTests() {
     if (configurationComplete) {
@@ -821,7 +656,7 @@ function __runIntegrationTests() {
 
     waitingToRunIntegrationTests = false;
 
-    console.log("TTTTT Starting integration tests ");
+    console.log("TTTTT Starting ProxyJS integration tests ");
 
     QuickLogger.logInfoEvent('This is an Info level event');
     QuickLogger.logWarnEvent('This is a Warning level event');
@@ -901,15 +736,14 @@ function __runIntegrationTests() {
     console.log('validatedReferrerFromReferrer referrer=' + testStr + ' result=' + targetStr);
 
 
-    console.log("TTTTT Completed integration tests ");
+    console.log("TTTTT Completed ProxyJS integration tests ");
 }
 
 function loadConfigThenStart() {
     configProcessHandlers(process);
-    loadConfigurationFile();
+    Configuration.loadConfigurationFile().then(startServer, cannotStartServer);
 }
 
-exports.ArcGISProxyStart = loadConfigThenStart;
 exports.ArcGISProxyIntegrationTest = runIntegrationTests;
 
 loadConfigThenStart();

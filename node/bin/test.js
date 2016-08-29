@@ -1,5 +1,5 @@
 /**
- * Project unit test suite. Created on 8/5/16.
+ * Project unit test suite.
  */
 
 const QuickLogger = require('./QuickLogger');
@@ -243,6 +243,91 @@ function unitTests () {
     console.log('testProtocolsMatch p1=' + testStr + ' p2=' + targetStr + ' result=' + (result ? 'true' : 'false'));
 
 
+    targetStr = 'application/vnd.ogc.wms_xml';
+    testStr = 'text/xml';
+    result = '123application/vnd.ogc.wms_xml;charset: utf8;'.replace(targetStr, testStr);
+    console.log('string.replace p1=' + targetStr + ' p2=' + testStr + ' result=' + result);
+
+    targetStr = 'application/vnd.ogc.wms_xml';
+    testStr = 'text/xml';
+    result = 'application/vnd.ogc.wms_xml;charset: utf8;'.replace(targetStr, testStr);
+    console.log('string.replace p1=' + targetStr + ' p2=' + testStr + ' result=' + result);
+
+    targetStr = 'application/vnd.ogc.wms_xml';
+    testStr = 'text/xml';
+    result = 'ation/vnd.ogc.wms_xml;charset: utf8;'.replace(targetStr, testStr);
+    console.log('string.replace p1=' + targetStr + ' p2=' + testStr + ' result=' + result);
+
+    testStr = '?token=3426874628764872638476287634&x=121&y=22&f=json&user=Harry Bartell&sammy=davis';
+    result = ProjectUtilities.queryStringToObject(testStr);
+    console.log('queryStringToObject for ' + testStr + ' result=' + JSON.stringify(result));
+
+    testStr = 'token=3426874628764872638476287634&x="121"&y=22&f=json&user=Harry Bartell&sammy=davis';
+    result = ProjectUtilities.queryStringToObject(testStr);
+    console.log('queryStringToObject for ' + testStr + ' result=' + JSON.stringify(result));
+
+    targetStr = ProjectUtilities.objectToQueryString(result);
+    console.log('objectToQueryString for ' + JSON.stringify(result) + ' result=' + targetStr);
+
+    testStr = '?token=3426874628764872638476287634&x=121&y=22&f=json&user=Harry Bartell&sammy=davis';
+    targetStr = 'token';
+    result = ProjectUtilities.findTokenInString(testStr, targetStr);
+    console.log('findTokenInString for ' + testStr + ' "' + targetStr + '" result=' + result);
+
+    testStr = '?y=22&f=json&user=Harry Bartell&sammy=davis&token=3426874628764872638476287634&x=121';
+    targetStr = 'token';
+    result = ProjectUtilities.findTokenInString(testStr, targetStr);
+    console.log('findTokenInString for ' + testStr + ' "' + targetStr + '" result=' + result);
+
+    testStr = '?y=22&f=json&user=Harry Bartell&sammy=davis&token=3426874628764872638476287634';
+    targetStr = 'token';
+    result = ProjectUtilities.findTokenInString(testStr, targetStr);
+    console.log('findTokenInString for ' + testStr + ' "' + targetStr + '" result=' + result);
+
+    testStr = 'token=3426874628764872638476287634';
+    targetStr = 'token';
+    result = ProjectUtilities.findTokenInString(testStr, targetStr);
+    console.log('findTokenInString for ' + testStr + ' "' + targetStr + '" result=' + result);
+
+    testStr = 'token="3426874628764872638476287634"';
+    targetStr = 'token';
+    result = ProjectUtilities.findTokenInString(testStr, targetStr);
+    console.log('findTokenInString for ' + testStr + ' "' + targetStr + '" result=' + result);
+
+    testStr = '?y=22&f=json&user=Harry Bartell&sammy=davis';
+    targetStr = 'token';
+    result = ProjectUtilities.findTokenInString(testStr, targetStr);
+    console.log('findTokenInString for ' + testStr + ' "' + targetStr + '" result=' + result);
+
+    testStr = '"token":"3426874628764872638476287634"';
+    targetStr = 'token';
+    result = ProjectUtilities.findTokenInString(testStr, targetStr);
+    console.log('findTokenInString for ' + testStr + ' "' + targetStr + '" result=' + result);
+
+    testStr = '"token": "3426874628764872638476287634"';
+    targetStr = 'token';
+    result = ProjectUtilities.findTokenInString(testStr, targetStr);
+    console.log('findTokenInString for ' + testStr + ' "' + targetStr + '" result=' + result);
+
+    testStr = '{"token": "3426874628764872638476287634"}';
+    targetStr = 'token';
+    result = ProjectUtilities.findTokenInString(testStr, targetStr);
+    console.log('findTokenInString for ' + testStr + ' "' + targetStr + '" result=' + result);
+
+    testStr = '{"error": 498,\n"token": "3426874628764872638476287634"\n"f": "json"}';
+    targetStr = 'token';
+    result = ProjectUtilities.findTokenInString(testStr, targetStr);
+    console.log('findTokenInString for ' + testStr + ' "' + targetStr + '" result=' + result);
+
+    testStr = '{"error":498,\n"token":"3426874628764872638476287634"\n"f":"json"}';
+    targetStr = 'token';
+    result = ProjectUtilities.findTokenInString(testStr, targetStr);
+    console.log('findTokenInString for ' + testStr + ' "' + targetStr + '" result=' + result);
+
+    testStr = '{"error":498,\n"f":"json"}';
+    targetStr = 'token';
+    result = ProjectUtilities.findTokenInString(testStr, targetStr);
+    console.log('findTokenInString for ' + testStr + ' "' + targetStr + '" result=' + result);
 
     console.log('TTTTT Local unit tests complete:');
 }

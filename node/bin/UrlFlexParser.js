@@ -1,9 +1,10 @@
 /**
- * A URL parser that also handles the weird rules we emplooy in our proxy service.
+ * A URL parser that also handles the weird rules we employ in our proxy service.
  * Accepted URL formats:
- *    http://[yourmachine]/proxy?http://services.arcgisonline.com/ArcGIS/rest/services/?f=pjson
- *    http://[yourmachine]/sproxy?http://services.arcgisonline.com/ArcGIS/rest/services/?f=pjson
- *    http://[yourmachine]/proxy/http/services.arcgisonline.com/ArcGIS/rest/services/?f=pjson
+ *    http://service.host.tld/proxy?http://services.arcgisonline.com/ArcGIS/rest/services/?f=pjson
+ *    http://service.host.tld/sproxy?http://services.arcgisonline.com/ArcGIS/rest/services/?f=pjson
+ *    http://service.host.tld/proxy/http/services.arcgisonline.com/ArcGIS/rest/services/?f=pjson
+ *    http://service.host.tld/proxy/http://services.arcgisonline.com/ArcGIS/rest/services/?f=pjson
  *    http://service.host.tld/path/path?query=string&key=value
  *    https://service.host.tld/path/path?query=string&key=value
  *    *://service.host.tld/path/path?query=string&key=value
@@ -353,24 +354,6 @@ module.exports.parsedUrlPartsMatch = function(urlPartsSource, urlPartsTarget) {
 
 
 /**
- * When we break apart full URLs into their constituent parts (e.g. using url.parse()) this function
- * will take that url object and return a single string representing the original URL.
- * @param urlParts
- * @returns {*}
- */
-module.exports.fullURLFromParts = function(urlParts) {
-    if (urlParts != null) {
-        if (urlParts.protocol == '*' && urlParts.hostname == '*' && urlParts.path == '*') {
-            return '*';
-        } else {
-            return urlParts.protocol + '://' + urlParts.hostname + (urlParts.path.charAt(0) == '/' ? urlParts.path : '/' + urlParts.path);
-        }
-    } else {
-        return '*';
-    }
-};
-
-/**
  * Determine if the referrer matches one of the configured allowed referrers. If it does, return the string
  * we store in our table as the look-up key for this referrer. If no match, return null.
  * @param referrer {string} referer (sic) received from http request
@@ -478,6 +461,24 @@ module.exports.getBestMatchPort = function(referrer, urlRequestedParts, serverUR
         port = 80;
     }
     return port;
+};
+
+/**
+ * When we break apart full URLs acting as referrers into their constituent parts (e.g. using url.parse()) this function
+ * will take that url object and return a single string representing the original referrer.
+ * @param urlParts
+ * @returns {*}
+ */
+module.exports.fullReferrerURLFromParts = function(urlParts) {
+    if (urlParts != null) {
+        if (urlParts.protocol == '*' && urlParts.hostname == '*' && urlParts.path == '*') {
+            return '*';
+        } else {
+            return urlParts.protocol + '://' + urlParts.hostname + (urlParts.path.charAt(0) == '/' ? urlParts.path : '/' + urlParts.path);
+        }
+    } else {
+        return '*';
+    }
 };
 
 module.exports.buildFullURLFromParts = function(urlParts) {
