@@ -47,6 +47,8 @@
             "clientSecret": "5a5d50-example-c867b6efcf969bdcc6a2",
             "rateLimit": "120",
             "rateLimitPeriod": "60",
+            "username": "username",
+            "password": "password",
             "matchAll": true
         },
         {

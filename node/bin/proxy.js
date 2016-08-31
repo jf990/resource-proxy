@@ -128,78 +128,298 @@ function isValidURLRequest (uri) {
     return isMatch;
 }
 
-function getNewTokenIfCredentialsAreSpecified(serverURLInfo, requestUrl) {
-    var newToken = null;
+/**
+ * Given an ArcGIS Online URL scheme, convert it to a path that would enable us to retrieve a valid
+ * token endpoint URL, allowing us to ask for a token. This function is Promise based, it will return
+ * a promise that will either resolve with the URL (since it must do a network query to get it) or
+ * an error if we could not figure it out.
+ * @param url {string} a URL to transform.
+ * @returns {Promise} The promise that will resolve with the new URL or an error.
+ */
+function getTokenEndpointFromURL(url) {
+    var searchFor,
+        index,
+        tokenUrl,
+        tokenUrlParts,
+        method,
+        parameters,
+        tokenServiceUri = null;
 
-    if (serverURLInfo.isAppLogin) {
-    //    //OAuth 2.0 mode authentication
-    //    //"App Login" - authenticating using client_id and client_secret stored in config
-    //    serverURLInfo.OAuth2Endpoint = string.IsNullOrEmpty(serverURLInfo.OAuth2Endpoint) ? DEFAULT_OAUTH : serverURLInfo.OAuth2Endpoint;
-    //    if (serverURLInfo.OAuth2Endpoint[serverURLInfo.OAuth2Endpoint.Length - 1] != '/') {
-    //        serverURLInfo.OAuth2Endpoint += "/";
-    //    }
-    //    log(TraceLevel.Info, "Service is secured by " + serverURLInfo.OAuth2Endpoint + ": getting new token...");
-    //    var uri = serverURLInfo.OAuth2Endpoint + "token?client_id=" + serverURLInfo.ClientId + "&client_secret=" + serverURLInfo.ClientSecret + "&grant_type=client_credentials&f=json";
-    //    var tokenResponse = webResponseToString(doHTTPRequest(uri, "POST"));
-    //    token = extractToken(tokenResponse, "token");
-    //    if (!string.IsNullOrEmpty(token))
-    //        token = exchangePortalTokenForServerToken(token, serverURLInfo);
-    } else if (serverURLInfo.isUserLogin) {
-    //        // standalone ArcGIS Server/ArcGIS Online token-based authentication
-    //
-    //        //if a request is already being made to generate a token, just let it go
-    //        if (requestUrl.ToLower().Contains("/generatetoken")) {
-    //            var tokenResponse = webResponseToString(doHTTPRequest(requestUrl, "POST"));
-    //            token = extractToken(tokenResponse, "token");
-    //            return token;
-    //        }
-    //
-    //        //lets look for '/rest/' in the requested URL (could be 'rest/services', 'rest/community'...)
-    //        if (reqUrl.ToLower().Contains("/rest/"))
-    //            infoUrl = requestUrl.Substring(0, requestUrl.IndexOf("/rest/", StringComparison.OrdinalIgnoreCase));
-    //
-    //        //if we don't find 'rest', lets look for the portal specific 'sharing' instead
-    //        else if (reqUrl.ToLower().Contains("/sharing/")) {
-    //            infoUrl = requestUrl.Substring(0, requestUrl.IndexOf("/sharing/", StringComparison.OrdinalIgnoreCase));
-    //            infoUrl = infoUrl + "/sharing";
-    //        }
-    //        else
-    //            throw new ApplicationException("Unable to determine the correct URL to request a token to access private resources.");
-    //
-    //        if (infoUrl != "") {
-    //            log(TraceLevel.Info," Querying security endpoint...");
-    //            infoUrl += "/rest/info?f=json";
-    //            //lets send a request to try and determine the URL of a token generator
-    //            string infoResponse = webResponseToString(doHTTPRequest(infoUrl, "GET"));
-    //            String tokenServiceUri = getJsonValue(infoResponse, "tokenServicesUrl");
-    //            if (string.IsNullOrEmpty(tokenServiceUri)) {
-    //                string owningSystemUrl = getJsonValue(infoResponse, "owningSystemUrl");
-    //                if (!string.IsNullOrEmpty(owningSystemUrl)) {
-    //                    tokenServiceUri = owningSystemUrl + "/sharing/generateToken";
-    //                }
-    //            }
-    //            if (tokenServiceUri != "") {
-    //                log(TraceLevel.Info," Service is secured by " + tokenServiceUri + ": getting new token...");
-    //                string uri = tokenServiceUri + "?f=json&request=getToken&referer=" + PROXY_REFERER + "&expiration=60&username=" + serverURLInfo.Username + "&password=" + serverURLInfo.Password;
-    //                string tokenResponse = webResponseToString(doHTTPRequest(uri, "POST"));
-    //                token = extractToken(tokenResponse, "token");
-    //            }
-    //        }
-    //    }
-    }
-    return newToken;
+    return new Promise(function(resolvePromise, rejectPromise) {
+        // Convert request URL into a token endpoint URL. Look for '/rest/' in the requested URL (could be 'rest/services', 'rest/community'...)
+        searchFor = '/rest/';
+        index = url.indexOf(searchFor);
+        if (index >= 0) {
+            tokenUrl = url.substr(0, index) + '/rest/info';
+        } else {
+            searchFor = '/sharing/';
+            index = url.indexOf(searchFor);
+            if (index >= 0) {
+                tokenUrl = url.substr(0, index) + '/sharing/rest/info';
+            } else {
+                tokenUrl = url + '/arcgis/rest/info';
+            }
+        }
+        parameters = {
+            f: 'json'
+        };
+        method = 'GET';
+        tokenUrlParts = UrlFlexParser.parseAndFixURLParts(tokenUrl);
+        if (tokenUrlParts != null && tokenUrlParts.hostname != null && tokenUrlParts.pathname != null && tokenUrlParts.protocol != null) {
+            httpRequestPromiseResponse(tokenUrlParts.hostname, tokenUrlParts.pathname, method, tokenUrlParts.protocol == 'https', parameters).then(
+                function (serverResponse) {
+                    var authInfo = JSON.parse(serverResponse);
+                    if (authInfo != null && authInfo.authInfo !== undefined) {
+                        tokenServiceUri = authInfo.authInfo.tokenServicesUrl;
+                    }
+                    if (tokenServiceUri == null) {
+                        // If no tokenServicesUrl, try to find owningSystemUrl as token endpoint
+                        if (authInfo.owningSystemUrl !== undefined) {
+                            tokenServiceUri = authInfo.owningSystemUrl + '/sharing/generateToken';
+                        }
+                    }
+                    if (tokenServiceUri != null) {
+                        resolvePromise(tokenServiceUri);
+                    } else {
+                        rejectPromise(new Error('Unable to transform ' + url + ' or ' + tokenUrl + ' into a token endpoint URL.'));
+                    }
+                },
+                function (serverError) {
+                    rejectPromise(serverError);
+                }
+            );
+        } else {
+            rejectPromise(new Error('Unable to transform ' + url + ' or ' + tokenUrl + ' into a usable URL.'));
+        }
+    });
 }
 
+/**
+ * If the server URL configuration is such that a username/password is used to get a token then
+ * this function will attempt to contact the service with the user credentials and get a valid token
+ * on behalf of that user. This function is very asynchronous it may make several network requests
+ * before it gets the token.
+ * @param referrer {string} who we want the service to think is making the request.
+ * @param serverUrlInfo {object} our configuration object for this service.
+ * @returns {Promise} A promise to resolve with the new token or reject with an error.
+ */
+function getNewTokenFromUserNamePasswordLogin(referrer, serverUrlInfo) {
+        var parameters,
+            method = 'POST',
+            tokenServiceUriParts,
+            token;
+
+    return new Promise(function(resolvePromise, rejectPromise) {
+        if (ProjectUtilities.isPropertySet(serverUrlInfo, 'username') && ProjectUtilities.isPropertySet(serverUrlInfo, 'password')) {
+            parameters = {
+                request: 'getToken',
+                f: 'json',
+                referer: referrer,
+                expiration: 60,
+                username: serverUrlInfo.username,
+                password: serverUrlInfo.password
+            };
+            getTokenEndpointFromURL(serverUrlInfo.url).then(
+                function (tokenServiceUri) {
+                    tokenServiceUriParts = UrlFlexParser.parseAndFixURLParts(tokenServiceUri);
+                    httpRequestPromiseResponse(tokenServiceUriParts.host, tokenServiceUriParts.path, method, tokenServiceUriParts.protocol == 'https', parameters).then(
+                        function (responseBody) {
+                            token = ProjectUtilities.findTokenInString(responseBody, 'token');
+                            resolvePromise(token);
+                        },
+                        function (error) {
+                            rejectPromise(error);
+                        }
+                    );
+                },
+                function (error) {
+                    rejectPromise(error);
+                }
+            );
+        } else {
+            rejectPromise(new Error('Both username and password must be set to enable user login.'));
+        }
+    });
+}
+
+/**
+ * OAuth 2.0 mode authentication "App Login" - authenticating using oauth2Endpoint, clientId, and clientSecret specified
+ * in configuration. Because this is an http request (or several) it is Promise based. The token is passed to the
+ * promise resolve function or an error is passed to the promise reject function.
+ * @param serverURLInfo
+ * @param requestUrl
+ * @return {Promise}
+ */
+function performAppLogin(serverURLInfo) {
+    QuickLogger.logInfoEvent("Service is secured by " + serverURLInfo.oauth2Endpoint + ": getting new token...");
+    var tokenRequestPromise = new Promise(function(resolvePromise, rejectPromise) {
+        var oauth2Endpoint = serverURLInfo.oauth2Endpoint + 'token',
+            parameters = {
+                client_id: serverURLInfo.clientId,
+                client_secret: serverURLInfo.clientSecret,
+                grant_type: 'client_credentials',
+                f: 'json'
+            },
+            oauthUrlParts = UrlFlexParser.parseAndFixURLParts(oauth2Endpoint),
+            tokenResponse;
+
+        httpRequestPromiseResponse(oauthUrlParts.hostname, oauthUrlParts.pathname, 'POST', oauthUrlParts.protocol == 'https', parameters).then(
+            function(serverResponse) {
+                tokenResponse = ProjectUtilities.findTokenInString(serverResponse, 'token');
+                if (tokenResponse.length > 0) {
+                    exchangePortalTokenForServerToken(tokenResponse, serverURLInfo).then(resolvePromise, rejectPromise);
+                } else {
+                    rejectPromise(new Error('App login could not get a token from the server response of ' + serverResponse));
+                }
+            },
+            function(error) {
+                rejectPromise(error);
+            }
+        );
+    });
+    return tokenRequestPromise;
+}
+
+function performUserLogin(serverURLInfo, requestUrl) {
+    // standalone ArcGIS Server/ArcGIS Online token-based authentication
+    var requestUrlParts = UrlFlexParser.parseAndFixURLParts(requestUrl),
+        tokenResponse;
+
+    QuickLogger.logInfoEvent("Service requires user login.");
+    var tokenRequestPromise = new Promise(function(resolvePromise, rejectPromise) {
+        // if a request is already being made to generate a token, just let it go. TODO: Where is username/password???
+        if (requestUrlParts.pathname.toLowerCase().indexOf('/generatetoken') >= 0) {
+            httpRequestPromiseResponse(requestUrlParts.hostname, requestUrlParts.pathname, 'POST', requestUrlParts.protocol == 'https', null).then(
+                function(serverResponse) {
+                    tokenResponse = ProjectUtilities.findTokenInString(serverResponse, 'token');
+                    if (tokenResponse.length > 0) {
+                        resolvePromise(tokenResponse);
+                    } else {
+                        rejectPromise(new Error('User login could not get a token from the server response of ' + serverResponse));
+                    }
+                },
+                function(error) {
+                    rejectPromise(error);
+                }
+            );
+        } else {
+            getNewTokenFromUserNamePasswordLogin(referrer, serverURLInfo).then(resolvePromise, rejectPromise);
+        }
+    });
+    return tokenRequestPromise;
+}
+
+function getNewTokenIfCredentialsAreSpecified(serverURLInfo, requestUrl) {
+    return new Promise(function(resolvePromise, rejectPromise) {
+        if (serverURLInfo.isAppLogin) {
+            performAppLogin(serverURLInfo).then(resolvePromise, rejectPromise);
+        } else if (serverURLInfo.isUserLogin) {
+            performUserLogin(serverURLInfo, requestUrl).then(resolvePromise, rejectPromise);
+        }
+    });
+}
+
+/**
+ * Use the token we have and exchange it for a long-lived server token.
+ * @param portalToken {string} user's short-lived token.
+ * @param serverURLInfo {object} the server URL we are conversing with.
+ * @returns {Promise} The promise to return the token from the server, once it arrives.
+ */
 function exchangePortalTokenForServerToken(portalToken, serverURLInfo) {
-    // ideally, we should POST the token request
-    var parameters = {
-        token: portalToken,
-        serverURL: serverURLInfo.url,
-        f: "json"
-    };
-    var uri = serverURLInfo.oauth2endpoint.replace('/oauth2', '/generateToken');
-    var tokenResponse = webResponseToString(doHTTPRequest(uri, "GET"));
-    return ProjectUtilities.findTokenInString(tokenResponse, 'token');
+    var responsePromise = new Promise(function(resolvePromise, rejectPromise) {
+        var parameters = {
+                token: portalToken,
+                serverURL: serverURLInfo.url,
+                f: 'json'
+            },
+            uri = serverURLInfo.oauth2Endpoint.replace('/oauth2', '/generateToken'),
+            oauthUrlParts = UrlFlexParser.parseAndFixURLParts(uri),
+            host = oauthUrlParts.hostname,
+            path = oauthUrlParts.path,
+            tokenResponse;
+
+        httpRequestPromiseResponse(host, path, 'POST', UrlFlexParser.getBestMatchProtocol('*', oauthUrlParts, serverURLInfo) == 'https', parameters).then(
+            function(serverResponse) {
+                tokenResponse = ProjectUtilities.findTokenInString(serverResponse, 'token');
+                if (tokenResponse.length > 0) {
+                    resolvePromise(tokenResponse);
+                } else {
+                    rejectPromise(new Error('Error could not get a token from the server response of ' + serverResponse));
+                }
+            },
+            function(error) {
+                rejectPromise(error);
+            }
+        );
+    });
+    return responsePromise;
+}
+
+/**
+ * Issue an HTTP request and wait for a response from the server. An http request is an asynchronous request
+ * using Node's http client. This is promised based, so the function returns a promise that will resolve with
+ * the server response or fail with an error.
+ * @param host {string} host server to contact www.sever.tld
+ * @param path {string} path at server to request. Should begin with /.
+ * @param method {string} GET|POST
+ * @param useHttps {boolean} false uses http (80), true uses https (443)
+ * @param parameters {object} request parameters object of key/values. Gets converted into a query string or post body depending on method.
+ * @return {Promise} You get a promise that will resolve with the server response or fail with an error.
+ */
+function httpRequestPromiseResponse(host, path, method, useHttps, parameters) {
+    var responsePromise = new Promise(function(resolvePromise, rejectPromise) {
+        var httpRequestOptions = {
+                hostname: host,
+                path: path,
+                method: method
+            },
+            requestBody = ProjectUtilities.objectToQueryString(parameters),
+            requestHeaders = {},
+            responseStatus = 0,
+            responseBody = '',
+            request;
+
+        var handleServerResponse = function(response) {
+            responseStatus = response.statusCode;
+            if (responseStatus > 399) {
+                rejectPromise(new Error('Error ' + responseStatus + ' on ' + host + path));
+            } else {
+                response.on('data', function (chunk) {
+                    responseBody += chunk;
+                });
+                response.on('end', function () {
+                    // if response looks like "{"error":{"code":498,"message":"Invalid token.","details":[]}}" then ERROR
+                    if (ProjectUtilities.startsWith(responseBody, '{"error":')) {
+                        responseStatus = ProjectUtilities.findNumberAfterTokenInString(responseBody, 'code');
+                        rejectPromise(new Error('Error ' + responseStatus + ' on ' + host + path));
+                    } else {
+                        resolvePromise(responseBody);
+                    }
+                });
+            }
+        };
+
+        if (method == 'POST') {
+            requestHeaders['Content-Type'] = 'application/x-www-form-urlencoded';
+            requestHeaders['Content-Length'] = Buffer.byteLength(requestBody);
+        } else if (method == 'GET' && requestBody.length > 0) {
+            httpRequestOptions.path += '?' + requestBody;
+            requestBody = '';
+        }
+        httpRequestOptions.headers = requestHeaders;
+        if (useHttps) {
+            httpRequestOptions.protocol = 'https:';
+            request = https.request(httpRequestOptions, handleServerResponse);
+        } else {
+            httpRequestOptions.protocol = 'http:';
+            request = http.request(httpRequestOptions, handleServerResponse);
+        }
+        request.on('error', function(error) {
+            rejectPromise(error);
+        });
+        request.end(requestBody);
+    });
+    return responsePromise;
 }
 
 /**
@@ -242,11 +462,11 @@ function processValidatedRequest (urlRequestedParts, serverURLInfo, referrer, re
             request.url = proxyRequest;
             request.headers.host = hostname;
 
-            // TODO: IFF a token based request we should check if the toekn we have is any good and if not generate a new token
+            // TODO: if a token based request we should check if the token we have is any good and if not generate a new token
 
             // TODO: Not really sure this worked if the proxy generates an error as we are not catching any error from the proxied service
             validProcessedRequests ++;
-            QuickLogger.logInfoEvent("Issuing proxy request [" + request.method + "](" + request.url + ") for " + proxyRequest);
+            QuickLogger.logInfoEvent("==> Issuing proxy request [" + request.method + "](" + request.url + ") for " + proxyRequest);
             proxyServer.web(request, response, {
                 target: proxyRequest,
                 ignorePath: true
@@ -311,7 +531,7 @@ function sendStatusResponse (referrer, response) {
 }
 
 /**
- * Create an HTML dump of some valuable information regarding the current status of the proxy server.
+ * Create an HTML dump of some valuable information regarding the current status of this proxy server.
  * @param responseObject {Object} we iterate this object as the information to report.
  * @param response {Object} the http response object to write to.
  */
@@ -734,6 +954,50 @@ function __runIntegrationTests() {
     testStr = "*"; // should not match anything
     targetStr = UrlFlexParser.validatedReferrerFromReferrer(testStr, configuration.allowedReferrers);
     console.log('validatedReferrerFromReferrer referrer=' + testStr + ' result=' + targetStr);
+
+
+    httpRequestPromiseResponse("www.enginesis.com", "/index.php", "POST", false, {fn: "ESRBTypeList", site_id: 100, response: "json", user_id: 9999}).then(function(responseBody) {
+        result = responseBody;
+        console.log('httpRequestPromiseResponse POST ' + result);
+    }, function(error) {
+        console.log('httpRequestPromiseResponse POST error ' + error.message);
+    });
+
+    httpRequestPromiseResponse("www.enginesis.com", "/index.php", "GET", false, {fn: "ESRBTypeList", site_id: 100, response: "json", user_id: 9999}).then(function(responseBody) {
+        result = responseBody;
+        console.log('httpRequestPromiseResponse GET ' + result);
+    }, function(error) {
+        console.log('httpRequestPromiseResponse GET error ' + error.message);
+    });
+
+
+    var serverUrlInfo;
+    var urlParts;
+    testStr = '/proxy/http://route.arcgis.com/arcgis/rest/services/World/ClosestFacility/NAServer/ClosestFacility_World/solveClosestFacility';
+    urlParts = UrlFlexParser.parseURLRequest(testStr, configuration.listenURI);
+    serverUrlInfo = getServerUrlInfo(urlParts);
+    getTokenEndpointFromURL(serverUrlInfo.url).then(
+        function(endpoint) {
+            console.log('getTokenEndpointFromURL got ' + endpoint);
+        },
+        function(error) {
+            console.log('getTokenEndpointFromURL fails with ' + error.message);
+        }
+    );
+
+    testStr = 'http://developers.arcgis.com';
+    getNewTokenFromUserNamePasswordLogin(testStr, serverUrlInfo).then(
+        function(token) {
+            console.log('getNewTokenFromUserNamePasswordLogin got ' + token);
+        },
+        function(error) {
+            console.log('getNewTokenFromUserNamePasswordLogin fails with ' + error.message);
+        }
+    );
+
+    // exchangePortalTokenForServerToken(portalToken, serverURLInfo);
+
+    // getNewTokenIfCredentialsAreSpecified(serverURLInfo, requestUrl);
 
 
     console.log("TTTTT Completed ProxyJS integration tests ");

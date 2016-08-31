@@ -18,6 +18,9 @@
  * The part after the proxy path is taken as the service to proxy to. It is looked up in the serviceURLs table
  * and if matched the service information of that entry is used to make the request with the service. What the
  * service responds with is then passed back to the caller.
+ *
+ * TODO: This would be better if it were an object/class definition with properties and methods. The current
+ * implementation is a result of code refactoring that later grew beyond its original design.
  */
 
 const urlParser = require('url');
@@ -27,7 +30,7 @@ var logLevel;
 var logFunction;
 var allowAnyReferrer;
 var matchAllReferrer;
-var useHTTPS;
+var useHTTPS = true;
 
 
 /**
@@ -481,6 +484,16 @@ module.exports.fullReferrerURLFromParts = function(urlParts) {
     }
 };
 
+/**
+ * Given an object representing our URL parts structure this function will return a URL string
+ * combining the constituent parts. This function will make some assumptions based on the data:
+ *  - if protocol is * it will use https based on the global useHTTPS configuration setting.
+ *  - if port is not null, *, or 80 it will add port: to the url, otherwise it ignores port.
+ *  - if path is * it uses / instead, however if path ends with * it will remain.
+ *  - if there is a query string it will be appended to the end of the path.
+ * @param urlParts
+ * @returns {string}
+ */
 module.exports.buildFullURLFromParts = function(urlParts) {
     var url;
     url = urlParts.protocol == '*' ? (useHTTPS ? 'https' : 'http') : urlParts.protocol;
@@ -489,12 +502,12 @@ module.exports.buildFullURLFromParts = function(urlParts) {
     if (urlParts.port != '*' && urlParts.port != 80) {
         url += ':' + urlParts.port;
     }
-    if (urlParts.pathname == '*') {
+    if (urlParts.pathname == '*' || urlParts.pathname.trim().length == 0) {
         url += '/';
     } else {
         url += urlParts.pathname;
     }
-    if (urlParts.query != null && urlParts.query.length > 0) {
+    if (urlParts.query !== undefined && urlParts.query != null && urlParts.query.length > 0) {
         if (urlParts.query.charAt(0) == '?') {
             url += urlParts.query;
         } else {
@@ -502,6 +515,17 @@ module.exports.buildFullURLFromParts = function(urlParts) {
         }
     }
     return url;
+};
+
+/**
+ * Determine if the URL parts structure is valid enough to use as a URL.
+ * @param urlParts
+ * @returns {boolean}
+ */
+module.exports.isValidURL = function(urlParts) {
+    return urlParts.protocol !== undefined && urlParts.protocol != null && urlParts.protocol.trim().length > 0
+           && urlParts.hostname !== undefined && urlParts.hostname != null && urlParts.hostname.trim().length > 0
+           && urlParts.pathname !== undefined && urlParts.pathname != null;
 };
 
 /**

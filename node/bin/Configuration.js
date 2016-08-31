@@ -11,6 +11,7 @@ const QuickLogger = require('./QuickLogger');
 const UrlFlexParser = require('./UrlFlexParser');
 
 const defaultConfigurationFile = 'conf/config.json';
+const defaultOAuthEndpoint = 'https://www.arcgis.com/sharing/oauth2/';
 
 var configuration = {
     mustMatch: true,
@@ -320,9 +321,12 @@ function loadConfigurationFile (configFile) {
                             if (ProjectUtilities.isPropertySet(serverUrl, 'clientId') || ProjectUtilities.isPropertySet(serverUrl, 'clientSecret') || ProjectUtilities.isPropertySet(serverUrl, 'oauth2Endpoint')) {
                                 serverUrl.clientId = ProjectUtilities.getIfPropertySet(serverUrl, 'clientId', '');
                                 serverUrl.clientSecret = ProjectUtilities.getIfPropertySet(serverUrl, 'clientSecret', '');
-                                serverUrl.oauth2Endpoint = ProjectUtilities.getIfPropertySet(serverUrl, 'oauth2Endpoint', '');
+                                serverUrl.oauth2Endpoint = ProjectUtilities.getIfPropertySet(serverUrl, 'oauth2Endpoint', defaultOAuthEndpoint);
                                 if (serverUrl.clientId.length < 1 || serverUrl.clientSecret.length < 1 || serverUrl.oauth2Endpoint < 1) {
                                     serverUrl.errorMessage = 'When using OAuth a setting for clientId, clientSecret, and oauth2Endpoint must all be provided. At least one is missing.';
+                                }
+                                if (serverUrl.oauth2Endpoint.charAt(serverUrl.oauth2Endpoint.length - 1) != '/') {
+                                    serverUrl.oauth2Endpoint += '/';
                                 }
                             }
                             serverUrl.isUserLogin = isUserLogin(serverUrl);

@@ -124,16 +124,20 @@ module.exports.objectToQueryString = function(object) {
         key,
         value;
 
-    for (key in object) {
-        if (object.hasOwnProperty(key)) {
-            value = object[key];
-            if (Array.isArray(value)) {
-                value = value.join(',');
-            } else {
-                value = value.toString();
+    if (object !== undefined && object != null) {
+        for (key in object) {
+            if (object.hasOwnProperty(key)) {
+                value = object[key];
+                if (value === undefined || value === null) {
+                    continue;
+                } else if (Array.isArray(value)) {
+                    value = value.join(',');
+                } else {
+                    value = value.toString();
+                }
+                value = encodeURIComponent(value);
+                urlParameterString += (urlParameterString.length == 0 ? '' : '&') + key + '=' + value;
             }
-            value = encodeURIComponent(value);
-            urlParameterString += (urlParameterString.length == 0 ? '' : '&') + key + '=' + value;
         }
     }
     return urlParameterString;
@@ -180,6 +184,47 @@ module.exports.findTokenInString = function(source, token) {
                 } else {
                     value = '';
                 }
+            }
+        }
+    }
+    return value;
+};
+
+/**
+ * Look for the token in a string that is assumed to be either a URL query string or a JSON string. If the
+ * token is found the value is returned. This is useful when you need to pull out one value from a large string
+ * and you don't want to convert that large string into yet another memory-hogging object/array data structure and
+ * then traverse the structure to try to identify one value.
+ * @param source {string} string to search and extract
+ * @param token {string} the token we are looking for in source.
+ * @return {number} the value of the token, 0 if not found.
+ */
+module.exports.findNumberAfterTokenInString = function(source, token) {
+    var found,
+        searchToken,
+        value = 0;
+
+    if (source !== undefined && token !== undefined && source.trim().length > 0 && token.trim().length > 0) {
+        searchToken = '(\\?|&|\\/|)' + token + '=';
+        found = source.search(searchToken);
+        if (found >= 0) {
+            // found query string style &token=value, cut from = to next & or EOS
+            value = source.substr(found);
+            found = value.indexOf('=');
+            if (found >= 0) {
+                value = value.substr(found + 1);
+                found = value.indexOf('&');
+                if (found > 0) {
+                    value = value.substr(0, found);
+                }
+            }
+        } else {
+            // found json style "token": value, get next number value
+            searchToken = '"' + token +'":';
+            found = source.search(searchToken);
+            if (found >= 0) {
+                value = source.substr(found + searchToken.length);
+                value = parseInt(value);
             }
         }
     }
