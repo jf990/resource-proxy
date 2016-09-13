@@ -26,16 +26,23 @@
             "matchAll": true
         },
         {
-            "url": "geoenrich.arcgis.com",
-            "username": "username",
-            "password": "password",
+            "url": "demo.arcgis.com/ArcGIS/",
+            "hostRedirect": "http://services.arcgisonline.com/ArcGIS/rest/info/",
             "rateLimit": "120",
-            "rateLimitPeriod": "60",
+            "rateLimitPeriod": "1",
             "matchAll": true
         },
         {
-            "url": "geo.arcgis.com/ArcGIS/rest/info/",
-            "hostRedirect": "http://services.arcgisonline.com",
+            "url": "http://geocode.arcgis.com/arcgis/rest/services/Locators/ESRI_Geocode_USA/GeocodeServer/suggest",
+            "rateLimit": "120",
+            "rateLimitPeriod": "1",
+            "matchAll": true
+        },
+        {
+            "url": "http://route.arcgis.com/arcgis/rest/services/World/Route/NAServer/Route_World",
+            "oauth2Endpoint": "https://www.arcgis.com/sharing/oauth2",
+            "clientId": "6Xo1d-example-9Kn2",
+            "clientSecret": "5a5d50-example-c867b6efcf969bdcc6a2",
             "rateLimit": "120",
             "rateLimitPeriod": "1",
             "matchAll": true
@@ -52,11 +59,17 @@
             "matchAll": true
         },
         {
-            "url": "http://services.arcgisonline.com/ArcGIS/rest/services/",
-            "matchAll": false
+            "url": "http://server.arcgisonline.com/ArcGIS/rest/services/Demographics/USA_Median_Household_Income/MapServer",
+            "rateLimit": "12",
+            "rateLimitPeriod": "1",
+            "matchAll": true
         },
         {
             "url": "http://maps.lakecountyil.gov/arcgis/rest/services/PublicWorks/PWCommonLayers/FeatureServer/14",
+            "matchAll": true
+        },
+        {
+            "url": "http://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson",
             "matchAll": true
         }
     ]

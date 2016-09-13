@@ -162,6 +162,7 @@ module.exports.parseURLRequest = function(url, listenUriList) {
     url = decodeURI(url);
     if (url != null && url.length > 0) {
         // brute force take anything after http or https
+        // TODO: regex pattern is '[\/|\?|&]http[s]?[:]?\/'
         lookFor = '/https/';
         charDelimiter = url.indexOf(lookFor);
         if (charDelimiter >= 0) {
@@ -331,14 +332,14 @@ module.exports.parsedUrlPartsMatch = function(urlPartsSource, urlPartsTarget) {
             if (urlPartsSource.matchAll) {
                 isMatch = urlPartsTarget.path == '*' || urlPartsTarget.path == urlPartsSource.path;
                 if (isMatch) {
-                    errorMessage = "parsedUrlPartsMatch path " + urlPartsSource.path + " " + urlPartsTarget.path + "match.";
+                    errorMessage = "parsedUrlPartsMatch path " + urlPartsSource.path + " " + urlPartsTarget.path + " match.";
                 } else {
                     errorMessage = "parsedUrlPartsMatch path " + urlPartsSource.path + " " + urlPartsTarget.path + " don't match.";
                 }
             } else {
                 isMatch = urlPartsTarget.path == '*' || ProjectUtilities.startsWith(urlPartsTarget.path, urlPartsSource.path);
                 if (isMatch) {
-                    errorMessage = "parsedUrlPartsMatch path " + urlPartsSource.path + " " + urlPartsTarget.path + "match.";
+                    errorMessage = "parsedUrlPartsMatch path " + urlPartsSource.path + " " + urlPartsTarget.path + " match.";
                 } else {
                     errorMessage = "parsedUrlPartsMatch path " + urlPartsSource.path + " " + urlPartsTarget.path + " don't match.";
                 }

@@ -7,7 +7,7 @@
  * Each row in the database table tracks the resource utilization of each entry in the serverURLs table.
  *
  * Since accessing the database requires asynchronous functions, most of the query functions
- * return a promise that will later resolve with teh result.
+ * return a promise that will later resolve with the result.
  *
  */
 

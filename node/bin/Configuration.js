@@ -123,7 +123,8 @@ function loadConfigurationFile (configFile) {
         urlParts,
         logLevel,
         promise,
-        i;
+        i,
+        invalidSetting;
 
     promise = new Promise(function(resolvePromise, rejectPromise) {
         if (configFile == undefined || configFile == null || configFile.length == 0) {
@@ -156,22 +157,6 @@ function loadConfigurationFile (configFile) {
                     } else {
                         configuration.matchAllReferrer = true;
                     }
-                    if (json.proxyConfig.logFileName !== null) {
-                        configuration.logFileName = json.proxyConfig.logFileName;
-                    }
-                    if (json.proxyConfig.logFilePath !== null) {
-                        configuration.logFilePath = json.proxyConfig.logFilePath;
-                    }
-                    if (json.proxyConfig.logLevel !== null) {
-                        for (logLevel in QuickLogger.LOGLEVEL) {
-                            if (QuickLogger.LOGLEVEL.hasOwnProperty(logLevel)) {
-                                if (QuickLogger.LOGLEVEL[logLevel].label == json.proxyConfig.logLevel.toUpperCase()) {
-                                    configuration.logLevel = QuickLogger.LOGLEVEL[logLevel].value;
-                                    break;
-                                }
-                            }
-                        }
-                    }
                     if (json.proxyConfig.logToConsole !== null) {
                         if (typeof json.proxyConfig.logToConsole === 'string') {
                             configuration.logToConsole = json.proxyConfig.logToConsole.toLocaleLowerCase().trim() === 'true' || json.proxyConfig.logToConsole === '1';
@@ -180,6 +165,29 @@ function loadConfigurationFile (configFile) {
                         }
                     } else {
                         configuration.logToConsole = false;
+                    }
+                    if (json.proxyConfig.logFileName !== null) {
+                        configuration.logFileName = json.proxyConfig.logFileName;
+                    }
+                    if (json.proxyConfig.logFilePath !== null) {
+                        configuration.logFilePath = json.proxyConfig.logFilePath;
+                    }
+                    if (json.proxyConfig.logLevel !== null) {
+                        invalidSetting = true;
+                        for (logLevel in QuickLogger.LOGLEVEL) {
+                            if (QuickLogger.LOGLEVEL.hasOwnProperty(logLevel)) {
+                                if (QuickLogger.LOGLEVEL[logLevel].label == json.proxyConfig.logLevel.toUpperCase()) {
+                                    configuration.logLevel = QuickLogger.LOGLEVEL[logLevel].value;
+                                    invalidSetting = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if (invalidSetting) {
+                            console.log('Undefined logging level ' + json.proxyConfig.logLevel + ' requested, logging level set to ERROR.');
+                        }
+                    } else {
+                        console.log('No logging level requested, logging level set to ERROR.');
                     }
                     // allowedReferrers can be a single string, items separated with comma, or an array of strings.
                     // Make sure we end up with an array of strings.

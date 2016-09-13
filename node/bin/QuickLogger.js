@@ -8,7 +8,7 @@ const fs = require('fs');
 var defaultLogFileName = 'arcgis-proxy.txt';
 var logFileName;
 var logToConsole;
-var logLevel;
+var logLevelValue = 3;
 
 
 // LOGLEVELs control what type of logging will appear in the log file and on the console.
@@ -18,6 +18,21 @@ module.exports.LOGLEVEL = {
     WARN:  {label: "WARN",  value: 4, key: "W"},
     ERROR: {label: "ERROR", value: 3, key: "E"},
     NONE:  {label: "NONE",  value: 0, key: "X"}
+};
+
+/**
+ * Determine if a requested log level is greater or equal to the current log level in effect. This is helpful if
+ * you want to do something based on a particular logging level or higher.
+ * @param logLevelLabel
+ * @returns {boolean}
+ */
+module.exports.ifLogLevelGreaterOrEqual = function(logLevelLabel) {
+    var logInfo = this.getLogLevelInfoFromLabel(logLevelLabel);
+    if (logInfo != null) {
+        return logInfo.value >= logLevelValue;
+    } else {
+        return false;
+    }
 };
 
 /**
@@ -34,10 +49,11 @@ module.exports.LOGLEVEL = {
  */
 module.exports.setConfiguration = function(configuration) {
     var logFilepath,
+        logLevelInfo,
         isValid = false;
 
     logToConsole = configuration.logConsole !== undefined ? configuration.logConsole == true : false;
-    logLevel = configuration.logLevel !== undefined ? configuration.logLevel : this.LOGLEVEL.NONE.value;
+    logLevelValue = configuration.logLevel !== undefined ? configuration.logLevel : this.LOGLEVEL.NONE.value;
     if (configuration.logFilePath != null || configuration.logFileName != null) {
         if (configuration.logFilePath == null) {
             logFilePath = './';
@@ -99,14 +115,14 @@ module.exports.logErrorEvent = function(message) {
  * Log a message to a log file only if a log file was defined and we have write access to it. This
  * function appends a new line on the end of each call.
  *
- * @param logLevel {int} the log level value used to declare the level of logging this event represents. If this value
- *                       is less than the configuration log level then this event is not logged.
+ * @param logLevelForMessage {int} the log level value used to declare the level of logging this event represents. If this value
+ *            is less than the configuration log level then this event is not logged.
  * @param message {string} the message to write to the log file.
  */
 module.exports.logEvent = function(logLevelForMessage, message) {
-    if (logLevelForMessage <= logLevel) {
+    if (logLevelForMessage <= logLevelValue) {
         if (logFileName != null) {
-            fs.appendFile(logFileName, this.formatLogMessage(this.formatLogLevelKey(logLevel) + message), function (error) {
+            fs.appendFile(logFileName, this.formatLogMessage(this.formatLogLevelKey(logLevelValue) + message), function (error) {
                 if (error != null) {
                     console.log('*** Error writing to log file ' + logFileName + ": " + error.toString());
                     throw error;
@@ -136,7 +152,7 @@ module.exports.formatLogMessage = function(message) {
  * @returns {String} Log level identifier key with formatting.
  */
 module.exports.formatLogLevelKey = function(logLevel) {
-    var logInfo = this.getLogLevelInfo(logLevel);
+    var logInfo = this.getLogLevelInfoFromValue(logLevel);
     if (logInfo != null) {
         return '[' + logInfo.key + '] ';
     } else {
@@ -146,17 +162,37 @@ module.exports.formatLogLevelKey = function(logLevel) {
 
 /**
  * Given a log level value return the related log level info.
- * @param logLevel
+ * @param logLevelValue the integer value of the log level we are interested in.
  * @returns {*} Object if match, null if undefined log level value.
  */
-module.exports.getLogLevelInfo = function(logLevel) {
+module.exports.getLogLevelInfoFromValue = function(logLevelValue) {
     var logInfoKey,
         logInfo;
 
     for (logInfoKey in this.LOGLEVEL) {
         if (this.LOGLEVEL.hasOwnProperty(logInfoKey)) {
             logInfo = this.LOGLEVEL[logInfoKey];
-            if (logInfo.value == logLevel) {
+            if (logInfo.value == logLevelValue) {
+                return logInfo;
+            }
+        }
+    }
+    return null;
+};
+
+/**
+ * Given a log level label return the related log level info.
+ * @param logLevelLabel the string label of the log level we are interested in.
+ * @returns {*} Object if match, null if undefined log level value.
+ */
+module.exports.getLogLevelInfoFromLabel = function(logLevelLabel) {
+    var logInfoKey,
+        logInfo;
+
+    for (logInfoKey in this.LOGLEVEL) {
+        if (this.LOGLEVEL.hasOwnProperty(logInfoKey)) {
+            logInfo = this.LOGLEVEL[logInfoKey];
+            if (logInfo.label == logLevelLabel) {
                 return logInfo;
             }
         }
@@ -166,11 +202,11 @@ module.exports.getLogLevelInfo = function(logLevel) {
 
 /**
  * Synchronous file write for logging when we are in a critical situation, like shut down.
- * @param logLevel {int} logging level for this message.
+ * @param logLevelForMessage {int} logging level for this message.
  * @param message {string} a message to show in the log.
  */
-module.exports.logEventImmediately = function(levelToLog, message) {
-    if (levelToLog >= logLevel) {
+module.exports.logEventImmediately = function(logLevelForMessage, message) {
+    if (logLevelForMessage <= logLevelValue) {
         if (logFileName != null) {
             fs.appendFileSync(logFileName, this.formatLogMessage(message));
         }

@@ -424,7 +424,7 @@ function httpRequestPromiseResponse(host, path, method, useHttps, parameters) {
 
 /**
  * Calling this function means the request has passed all tests and we are going to contact the proxied service
- * and try to reply back to the caller with what it responds with.
+ * and try to reply back to the caller with what it responds with. We will do any toekn refresh here if necessary.
  * @param urlRequestedParts - our object of the request components.
  * @param referrer {string} the validated referrer we are tracking (can be "*").
  * @param request - the http server request object.
@@ -433,6 +433,7 @@ function httpRequestPromiseResponse(host, path, method, useHttps, parameters) {
  */
 function processValidatedRequest (urlRequestedParts, serverURLInfo, referrer, request, response) {
     var statusCode = 200,
+        statusMessage,
         proxyRequest,
         parsedHostRedirect,
         parsedProxy,
@@ -474,7 +475,11 @@ function processValidatedRequest (urlRequestedParts, serverURLInfo, referrer, re
         }
     } else {
         statusCode = 403;
-        sendErrorResponse(urlRequestedParts.proxyPath, response, statusCode, "Request from " + referrer + ", proxy has not been set up for " + urlRequestedParts.listenPath + ". Make sure there is a serverUrl in the configuration file that matches " + urlRequestedParts.listenPath);
+        statusMessage = "Request from " + referrer + ", proxy has not been set up for " + urlRequestedParts.listenPath + ".";
+        if (QuickLogger.ifLogLevelGreaterOrEqual('INFO')) {
+            statusMessage += " Make sure there is a serverUrl in the configuration file that matches " + urlRequestedParts.listenPath;
+        }
+        sendErrorResponse(urlRequestedParts.proxyPath, response, statusCode, statusMessage);
     }
     return statusCode != 200;
 }
@@ -624,12 +629,15 @@ function sendErrorResponse (urlRequested, response, errorCode, errorMessage) {
 
 /**
  * Determine if this request is within the rate meter threshold. If it is we continue to processValidatedRequest().
- * If it is not we generate the client reply here.
+ * If it is not we generate the client reply here. Because the rate meter check is asynchronous and this function will
+ * return before the check is complete it was just easier to deal with all subsequent processing here instead of
+ * turning this into a promise. Something to reconsider for the next update.
  * @param referrer {string} the validated referrer we are tracking (can be "*").
  * @param requestParts - the parsed URL that is being requested
  * @param serverURLInfo - the serverUrls object matching this request
  * @param request - the http request object, needed to pass on to processValidatedRequest or error response
  * @param response - the http response object, needed to pass on to processValidatedRequest or error response
+ * @return {int} status code, but since this function is asynchronous the code is mostly meaningless
  */
 function checkRateMeterThenProcessValidatedRequest (referrer, requestParts, serverURLInfo, request, response) {
     var statusCode = 200;
@@ -638,7 +646,7 @@ function checkRateMeterThenProcessValidatedRequest (referrer, requestParts, serv
             if (isUnderCap) {
                 processValidatedRequest(requestParts, serverURLInfo, referrer, request, response);
             } else {
-                statusCode = 420;
+                statusCode = 429; // TODO: or is it 402? or 420?
                 QuickLogger.logWarnEvent("RateMeter dissallowing access to " + serverURLInfo.url + " from " + referrer);
                 sendErrorResponse(request.url, response, statusCode, 'This is a metered resource, number of requests have exceeded the rate limit interval.');
             }
@@ -647,6 +655,8 @@ function checkRateMeterThenProcessValidatedRequest (referrer, requestParts, serv
             QuickLogger.logErrorEvent("RateMeter failed on " + serverURLInfo.url + " from " + referrer + ": " + error.toString());
             sendErrorResponse(request.url, response, statusCode, 'This is a metered resource but the server failed to determine the meter status of this resource.');
         });
+    } else {
+        statusCode = 500;
     }
     return statusCode;
 }
@@ -660,7 +670,6 @@ function checkRateMeterThenProcessValidatedRequest (referrer, requestParts, serv
 function processRequest (request, response) {
     var requestParts = UrlFlexParser.parseURLRequest(request.url, configuration.listenURI),
         serverURLInfo,
-        rejectionReason,
         referrer;
 
     attemptedRequests ++;
@@ -689,6 +698,7 @@ function processRequest (request, response) {
                                 processValidatedRequest(requestParts, serverURLInfo, referrer, request, response);
                             }
                         } else if (! configuration.mustMatch) {
+                            // TODO: I think we should remove this feature
                             // when mustMatch is false we accept absolutely anything (why, again, are we doing this?) so blindly forward the request on and cross your fingers someone actually thinks this is a good idea.
                             serverURLInfo = UrlFlexParser.parseAndFixURLParts(requestParts.listenPath);
                             serverURLInfo = {
@@ -742,13 +752,13 @@ function proxyErrorHandler(proxyError, proxyRequest, proxyResponse) {
  * @param options
  */
 function proxyRequestRewrite(proxyReq, proxyRequest, proxyResponse, options) {
-    QuickLogger.logInfoEvent("proxyRequestRewrite opportunity to alt request before contacting service.");
+    QuickLogger.logInfoEvent("proxyRequestRewrite opportunity to alter request before contacting service.");
 }
 /**
  * The proxy service gives us a chance to alter the response before sending it back to the client.
  * @param proxyRes
- * @param proxyRequest
- * @param proxyResponse
+ * @param proxyRequest - original request object
+ * @param proxyResponse - response object
  * @param options
  */
 function proxyResponseRewrite(proxyRes, proxyRequest, proxyResponse, options) {
@@ -758,7 +768,7 @@ function proxyResponseRewrite(proxyRes, proxyRequest, proxyResponse, options) {
         var replaceWith = 'text/xml';
         proxyRes.headers['content-type'] = proxyRes.headers['content-type'].replace(lookFor, replaceWith);
     }
-    QuickLogger.logInfoEvent("proxyResponseRewrite opportunity to alt response before writing it.");
+    QuickLogger.logInfoEvent("proxyResponseRewrite opportunity to alter response before writing it.");
 }
 
 /**
