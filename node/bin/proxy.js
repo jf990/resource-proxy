@@ -24,6 +24,8 @@ const http = require('http');
 const https = require('https');
 const httpProxy = require('http-proxy');
 const fs = require('fs');
+const BufferHelper = require('bufferhelper');
+const OS = require('os');
 const RateMeter = require('./RateMeter');
 const ProjectUtilities = require('./ProjectUtilities');
 const QuickLogger = require('./QuickLogger');
@@ -424,8 +426,9 @@ function httpRequestPromiseResponse(host, path, method, useHttps, parameters) {
 
 /**
  * Calling this function means the request has passed all tests and we are going to contact the proxied service
- * and try to reply back to the caller with what it responds with. We will do any toekn refresh here if necessary.
+ * and try to reply back to the caller with what it responds with. We will do any token refresh here if necessary.
  * @param urlRequestedParts - our object of the request components.
+ * @param serverURLInfo - the matching server url configuration for this request.
  * @param referrer {string} the validated referrer we are tracking (can be "*").
  * @param request - the http server request object.
  * @param response - the http server response object.
@@ -437,13 +440,22 @@ function processValidatedRequest (urlRequestedParts, serverURLInfo, referrer, re
         proxyRequest,
         parsedHostRedirect,
         parsedProxy,
-        hostname;
+        hostname,
+        contentType,
+        parameters;
 
     if (serverURLInfo != null) {
-        // pipe the response from the service back to the requestor.
-        // TODO: Handle Auth, oauth, GET/POST/FILES
+        // TODO: GET - combine params from query with url request
+        // TODO: POST - combine params from query with url request
+        // TODO: test FILES
+        // TODO: Handle Auth, oauth
 
         if (proxyServer != null) {
+            serverURLInfo.lastRequest = new Date();
+            if (serverURLInfo.firstRequest == 0) {
+                serverURLInfo.firstRequest = serverURLInfo.lastRequest;
+            }
+            serverURLInfo.totalRequests ++;
             if (serverURLInfo.isHostRedirect) {
                 // Host Redirect means we want to replace the host used in the request with a different host, but keep
                 // everything else received in the request (path, query).
@@ -455,15 +467,46 @@ function processValidatedRequest (urlRequestedParts, serverURLInfo, referrer, re
                 proxyRequest = UrlFlexParser.buildFullURLFromParts(parsedProxy);
                 hostname = parsedProxy.hostname;
             } else {
-                proxyRequest = UrlFlexParser.buildURLFromReferrerRequestAndInfo(referrer, urlRequestedParts, serverURLInfo);
                 hostname = serverURLInfo.hostname;
             }
+
+            // TODO: Combine parameters of the two requests, current request parameters override configured parameters
+            // TODO: !!!! Fuck! can't do this here, as we do not have the body yet.
+            if (request.method == 'POST' || request.method == 'PUT') {
+                contentType = request.headers['Content-Type'];
+                if (contentType.indexOf('x-www-form-urlencoded') >= 0) {
+                    // Its a post we have to read the entire body and extract the token form parameter if it's there.
+
+                } else if (contentType.indexOf('multipart') >= 0) {
+                    // this sucks. A post with files means we need to parse the whole thing, find the form, hold the file(s)
+                    // in memory, find the form parameters, see if there is a token, then resend it all to the server.
+
+                }
+            }
+            // Combine query parameters of the current request with the configuration. The current request has priority.
+            // TODO: Test different combinations of parameters
+            // request.query="?token=1234512345&f=json&status=1"
+            // urlRequestedParts.query="?token=1234512345&f=json&status=1"
+            // serverURLInfo.query="?token=1234512345&f=json&status=1"
+            parameters = UrlFlexParser.combineParameters(request, urlRequestedParts, serverURLInfo);
+            // if no token was provided in the request but one is in the configuration then use the configured token.
+            if (ProjectUtilities.isPropertySet(serverURLInfo, 'accessToken')) {
+                ProjectUtilities.addIfPropertyNotSet(parameters, 'token', serverURLInfo.accessToken);
+            } else if (ProjectUtilities.isPropertySet(serverURLInfo, 'token')) {
+                ProjectUtilities.addIfPropertyNotSet(parameters, 'token', serverURLInfo.token);
+            }
+            // TODO: Test if parameters is empty
+            urlRequestedParts.query = ProjectUtilities.objectToQueryString(parameters);
+            proxyRequest = UrlFlexParser.buildURLFromReferrerRequestAndInfo(referrer, urlRequestedParts, serverURLInfo);
             // Fix the request to transform it from our proxy server into a spoof of the matching request against the
             // proxied service
             request.url = proxyRequest;
             request.headers.host = hostname;
 
+
+
             // TODO: if a token based request we should check if the token we have is any good and if not generate a new token
+
 
             // TODO: Not really sure this worked if the proxy generates an error as we are not catching any error from the proxied service
             validProcessedRequests ++;
@@ -472,6 +515,10 @@ function processValidatedRequest (urlRequestedParts, serverURLInfo, referrer, re
                 target: proxyRequest,
                 ignorePath: true
             }, proxyResponseError);
+        } else {
+            statusCode = 500;
+            statusMessage = "Internal error: proxy server is not operating.";
+            sendErrorResponse(urlRequestedParts.proxyPath, response, statusCode, statusMessage);
         }
     } else {
         statusCode = 403;
@@ -508,29 +555,48 @@ function sendPingResponse (referrer, response) {
  * @param response - http response object.
  */
 function sendStatusResponse (referrer, response) {
-    var timeNow = new Date(),
-        responseObject = {
-            "Proxy Version": proxyVersion,
-            "Configuration File": "OK",
-            "Log File": "OK",
-            "Up-time": formatMillisecondsToHHMMSS(timeNow - serverStartTime),
-            "Requests": attemptedRequests,
-            "Requests processed": validProcessedRequests,
-            "Requests rejected": errorProcessedRequests,
-            "Referrers Allowed": configuration.allowedReferrers.map(function (allowedReferrer) {
-                return allowedReferrer.referrer;
-            }).join(', '),
-            "Referrer": referrer,
-            "Rate Meter": []
-        };
-    if (rateMeter != null) {
-        rateMeter.databaseDump().then(function (responseIsArrayOfTableRows) {
-            responseObject['Rate Meter'] = responseIsArrayOfTableRows;
-            reportHTMLStatusResponse(responseObject, response);
-        }, function (databaseError) {
-            responseObject.error = databaseError.toLocaleString();
-            reportHTMLStatusResponse(responseObject, response);
-        });
+    try {
+        var timeNow = new Date(),
+            i,
+            serverUrl,
+            serverUrls = configuration.serverUrls,
+            responseObject = {
+                "Proxy Version": proxyVersion,
+                "Configuration File": "OK",
+                "Log File": QuickLogger.getLogFileSize(),
+                "Up-time": ProjectUtilities.formatMillisecondsToHHMMSS(timeNow - serverStartTime),
+                "Requests": attemptedRequests,
+                "Requests processed": validProcessedRequests,
+                "Requests rejected": errorProcessedRequests,
+                "Referrers Allowed": configuration.allowedReferrers.map(function (allowedReferrer) {
+                    return allowedReferrer.referrer;
+                }).join(', '),
+                "Referrer": referrer,
+                "URL Stats": [],
+                "Rate Meter": []
+            };
+        for (i = 0; i < serverUrls.length; i ++) {
+            serverUrl = serverUrls[i];
+            if ( ! serverUrl.useRateMeter) {
+                responseObject['URL Stats'].push({
+                    'url': serverUrl.url.substring(0, 100) + (serverUrl.url.length > 100 ? '...' : ''),
+                    'total': serverUrl.totalRequests,
+                    'firstRequest': serverUrl.firstRequest == 0 ? '-' : serverUrl.firstRequest.toLocaleString(),
+                    'lastRequest': serverUrl.lastRequest == 0 ? '-' : serverUrl.lastRequest.toLocaleString()
+                });
+            }
+        }
+        if (rateMeter != null) {
+            rateMeter.databaseDump().then(function (responseIsArrayOfTableRows) {
+                responseObject['Rate Meter'] = responseIsArrayOfTableRows;
+                reportHTMLStatusResponse(responseObject, response);
+            }, function (databaseError) {
+                responseObject.error = databaseError.toLocaleString();
+                reportHTMLStatusResponse(responseObject, response);
+            });
+        }
+    } catch (exception) {
+        sendErrorResponse('status', response, 500, 'System error processing request: ' + exception.toLocaleString());
     }
     QuickLogger.logInfoEvent("Status request from " + referrer);
 }
@@ -692,6 +758,7 @@ function processRequest (request, response) {
                     if (isValidURLRequest(requestParts.listenPath)) {
                         serverURLInfo = getServerUrlInfo(requestParts);
                         if (serverURLInfo != null) {
+                            request.serverUrlInfo = serverURLInfo;
                             if (serverURLInfo.useRateMeter) {
                                 checkRateMeterThenProcessValidatedRequest(referrer, requestParts, serverURLInfo, request, response);
                             } else {
@@ -732,7 +799,11 @@ function processRequest (request, response) {
  * @param error
  */
 function proxyResponseError(error, proxyRequest, proxyResponse, proxyTarget) {
+    if (proxyResponse.status === undefined) {
+        proxyResponse.status = 502;
+    }
     QuickLogger.logErrorEvent('proxyResponseError caught error ' + error.code + ': ' + error.description + ' on ' + proxyTarget + ' status=' + proxyResponse.status);
+    sendErrorResponse(proxyRequest.url, proxyResponse, proxyResponse.status, 'Proxy request error: ' + error.code + ': ' + error.description);
 }
 
 /**
@@ -745,7 +816,7 @@ function proxyErrorHandler(proxyError, proxyRequest, proxyResponse) {
 }
 
 /**
- * The proxy service gives us a change to alter the request before forwarding it to the proxied server.
+ * The proxy service gives us a chance to alter the request before forwarding it to the proxied server.
  * @param proxyReq
  * @param proxyRequest
  * @param proxyResponse
@@ -755,20 +826,95 @@ function proxyRequestRewrite(proxyReq, proxyRequest, proxyResponse, options) {
     QuickLogger.logInfoEvent("proxyRequestRewrite opportunity to alter request before contacting service.");
 }
 /**
- * The proxy service gives us a chance to alter the response before sending it back to the client.
- * @param proxyRes
+ * The proxy service gives us a chance to alter the response before sending it back to the client. We are using
+ * this to check for failed authentication replies. If the service is using tokens we can attempt to resolve
+ * the expired or missing token.
+ * @param serviceResponse - response from the service
  * @param proxyRequest - original request object
- * @param proxyResponse - response object
+ * @param proxyResponse - response object from the proxy
  * @param options
  */
-function proxyResponseRewrite(proxyRes, proxyRequest, proxyResponse, options) {
-    // TODO: Read the stream and see if we get error 498/499. if so we need to generate a token.
-    if (proxyRes.headers['content-type'] !== undefined) {
+function proxyResponseRewrite(serviceResponse, proxyRequest, proxyResponse) {
+    var serverUrlInfo = proxyRequest.serverUrlInfo || {mayRequireToken: false};
+    QuickLogger.logInfoEvent("proxyResponseRewrite opportunity to alter response before writing it.");
+    if (serviceResponse.headers['content-type'] !== undefined) {
         var lookFor = 'application/vnd.ogc.wms_xml';
         var replaceWith = 'text/xml';
-        proxyRes.headers['content-type'] = proxyRes.headers['content-type'].replace(lookFor, replaceWith);
+        serviceResponse.headers['content-type'] = serviceResponse.headers['content-type'].replace(lookFor, replaceWith);
     }
-    QuickLogger.logInfoEvent("proxyResponseRewrite opportunity to alter response before writing it.");
+    if (serverUrlInfo.mayRequireToken) {
+        // TODO: See if we got error 498/499. if so we need to generate a token. To do this we need to review the server reply and see if it failed because of a bad/missing token
+        checkServerResponseForMissingToken(proxyResponse, serviceResponse.headers['content-encoding'], function (body) {
+            var errorCode,
+                newTokenIsRequired = false;
+
+            if (body) {
+                var errorCode = body.error.code;
+                if (errorCode == 403 || errorCode == 498 || errorCode == 499) {
+                    newTokenIsRequired = true;
+                }
+            }
+            return newTokenIsRequired;
+        });
+    }
+}
+
+/**
+ * Event we receive once the serviced request has completed.
+ * @param proxyRequest
+ * @param proxyResponse
+ * @param serviceResponse
+ */
+function proxyResponseComplete(proxyRequest, proxyResponse, serviceResponse) {
+    if (proxyResponse) {
+        var buffer = serviceResponse.body;
+        if (buffer != null && buffer.length > 0) {
+            QuickLogger.logInfoEvent("proxyResponseComplete got something is reply from service.");
+        }
+    }
+}
+
+function checkServerResponseForMissingToken(proxyResponse, contentType, functionThatChecksForMissingToken) {
+    var buffer = new BufferHelper(),
+        tokenIsMissing = false,
+        reponseWrite = proxyResponse.write,
+        responseEnd = proxyResponse.end;
+
+    // TODO: Content type can be deflate and gzip we need to handle both of those.
+
+    // Rewrite response method and get the content body.
+    proxyResponse.write = function (data) {
+        buffer.concat(data);
+    };
+
+    proxyResponse.end = function () {
+        // TODO: I really don't like this. We are going to parse the entire response to see if we receive the specific error we
+        // are looking for. if it is an error this is pretty small, but if its not an error we could be parsing a rather monstrous amount of json! only to convert it back to string!
+        // Maybe better to regex match '{"error":{"code":500' => '\"error\":[\s]*{[\s]*\"code\":[\s]*[\d]*'
+        var body;
+        try {
+            body = JSON.parse(buffer.toBuffer().toString());
+            if (body == null) {
+                body = buffer.toBuffer().toString();
+            } else {
+                tokenIsMissing = functionThatChecksForMissingToken(body);
+                // Converts the JSON back to buffer.
+                body = new BufferHelper(JSON.stringify(body));
+            }
+        } catch (e) {
+            console.log('JSON.parse error:', e);
+            body = buffer.toBuffer().toString();
+        }
+        if ( ! tokenIsMissing) {
+            // Call the response method
+            reponseWrite.call(proxyResponse, body);
+            responseEnd.call(proxyResponse);
+        } else {
+            // TODO: discard this response. get a new token from the token generator. retry the request with the new token. Send back the new response instead.
+            reponseWrite.call(proxyResponse, 'We could not generate a new token for you.');
+            responseEnd.call(proxyResponse);
+        }
+    };
 }
 
 /**
@@ -777,54 +923,66 @@ function proxyResponseRewrite(proxyRes, proxyRequest, proxyResponse, options) {
  */
 function startServer () {
     var httpsOptions,
+        hostName,
         proxyServerOptions = {};
 
-    UrlFlexParser.setConfiguration(configuration);
-    serverStartTime = new Date();
-    QuickLogger.logInfoEvent("Starting " + (configuration.useHTTPS ? 'HTTPS' : 'HTTP') + " server on port " + configuration.port + " -- " + serverStartTime.toLocaleString());
+    try {
+        UrlFlexParser.setConfiguration(configuration);
+        serverStartTime = new Date();
+        hostName = OS.hostname() + ' (' + OS.type() + ', ' + OS.release() + ')';
+        QuickLogger.logInfoEvent("Starting proxy version " + proxyVersion + " running on " + hostName + " via " + (configuration.useHTTPS ? 'HTTPS' : 'HTTP') + " server on port " + configuration.port + " -- " + serverStartTime.toLocaleString());
 
-    // The RateMeter depends on the configuration.serverUrls being valid.
-    rateMeter = RateMeter(configuration.serverUrls, configuration.allowedReferrers, QuickLogger.logErrorEvent.bind(QuickLogger));
-    rateMeter.start();
+        // The RateMeter depends on the configuration.serverUrls being valid.
+        rateMeter = RateMeter(configuration.serverUrls, configuration.allowedReferrers, QuickLogger.logErrorEvent.bind(QuickLogger));
+        rateMeter.start();
 
-    // If we are to run an https server we need to load the certificate and the key
-    if (configuration.useHTTPS) {
-        if (configuration.httpsPfxFile != null) {
-            httpsOptions = {
-                pfx: fs.readFileSync(configuration.httpsPfxFile)
-            };
+        // If we are to run an https server we need to load the certificate and the key
+        if (configuration.useHTTPS) {
+            if (configuration.httpsPfxFile !== undefined) {
+                httpsOptions = {
+                    pfx: fs.readFileSync(configuration.httpsPfxFile)
+                };
+            } else if (configuration.httpsKeyFile !== undefined && configuration.httpsCertificateFile !== undefined) {
+                httpsOptions = {
+                    key: fs.readFileSync(configuration.httpsKeyFile),
+                    cert: fs.readFileSync(configuration.httpsCertificateFile)
+                };
+            } else {
+                QuickLogger.logErrorEvent("HTTPS proxy was requested but the necessary files [httpsPfxFile or httpsKeyFile, httpsCertificateFile] were not defined in configuration.");
+            }
+            httpServer = https.createServer(httpsOptions, processRequest);
         } else {
-            httpsOptions = {
-                key: fs.readFileSync(configuration.httpsKeyFile),
-                cert: fs.readFileSync(configuration.httpsCertificateFile)
-            };
+            httpServer = http.createServer(processRequest);
         }
-        httpServer = https.createServer(httpsOptions, processRequest);
-    } else {
-        httpServer = http.createServer(processRequest);
-    }
+        if (httpServer != null) {
+            httpServer.on('clientError', function (error, socket) {
+                errorProcessedRequests ++;
+                socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
+            });
+            proxyServer = new httpProxy.createProxyServer(proxyServerOptions);
+            proxyServer.on('error', proxyErrorHandler);
+            proxyServer.on('proxyReq', proxyRequestRewrite);
+            proxyServer.on('proxyRes', proxyResponseRewrite);
+            proxyServer.on('end', proxyResponseComplete);
 
-    if (httpServer != null) {
-        httpServer.on('clientError', function (error, socket) {
-            errorProcessedRequests ++;
-            socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
-        });
-        proxyServer = new httpProxy.createProxyServer(proxyServerOptions);
-        proxyServer.on('error', proxyErrorHandler);
-        proxyServer.on('proxyReq', proxyRequestRewrite);
-        proxyServer.on('proxyRes', proxyResponseRewrite);
+            // Integration tests require a fully parsed configuration and a started server, so they were delayed until this point.
+            if (waitingToRunIntegrationTests) {
+                __runIntegrationTests();
+            }
 
-        if (waitingToRunIntegrationTests) {
-            __runIntegrationTests();
+            // Begin listening for client connections
+            httpServer.listen(configuration.port);
+        } else {
+            QuickLogger.logErrorEvent("Proxy server was not created, probably a OS system or memory issue.");
         }
-
-        httpServer.listen(configuration.port);
+    } catch (exception) {
+        QuickLogger.logErrorEvent("Proxy server encountered an exception and is not able to start: " + exception.toLocaleString());
     }
 }
 
 /**
  * When loading the configuration fails we end up here with a reason message. We terminate the app.
- * @param reason {Error} hopefully a message indicating why the configuration failed.
+ * @param reason {Error} A message indicating why the configuration failed.
  */
 function cannotStartServer(reason) {
     QuickLogger.logErrorEvent("!!! Server not started due to invalid configuration. " + reason.message);

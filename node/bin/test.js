@@ -329,6 +329,25 @@ function unitTests () {
     result = ProjectUtilities.findTokenInString(testStr, targetStr);
     console.log('findTokenInString for ' + testStr + ' "' + targetStr + '" result=' + result);
 
+    testStr = 'this-file-name.json';
+    result = ProjectUtilities.isFileTypeJson(testStr);
+    console.log('isFileTypeJson for ' + testStr + ' result=' + (result ? 'true' : 'false'));
+    testStr = 'this-file-name.xml';
+    result = ProjectUtilities.isFileTypeJson(testStr);
+    console.log('isFileTypeJson for ' + testStr + ' result=' + (result ? 'true' : 'false'));
+    testStr = '';
+    result = ProjectUtilities.isFileTypeJson(testStr);
+    console.log('isFileTypeJson for ' + testStr + ' result=' + (result ? 'true' : 'false'));
+    testStr = 'this-file-name';
+    result = ProjectUtilities.isFileTypeJson(testStr);
+    console.log('isFileTypeJson for ' + testStr + ' result=' + (result ? 'true' : 'false'));
+    testStr = 'json-JSON-name.JSON';
+    result = ProjectUtilities.isFileTypeJson(testStr);
+    console.log('isFileTypeJson for ' + testStr + ' result=' + (result ? 'true' : 'false'));
+    testStr = 'json-JSON-name-json';
+    result = ProjectUtilities.isFileTypeJson(testStr);
+    console.log('isFileTypeJson for ' + testStr + ' result=' + (result ? 'true' : 'false'));
+
     console.log('TTTTT Local unit tests complete:');
 }
 

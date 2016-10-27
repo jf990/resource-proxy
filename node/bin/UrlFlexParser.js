@@ -25,9 +25,8 @@
 
 const urlParser = require('url');
 const ProjectUtilities = require('./ProjectUtilities');
+const QuickLogger = require('./QuickLogger');
 
-var logLevel;
-var logFunction;
 var allowAnyReferrer;
 var matchAllReferrer;
 var useHTTPS = true;
@@ -38,8 +37,8 @@ var useHTTPS = true;
  * @param message {string}
  */
 function logMessage(message) {
-    if (message != null && message.length > 0 && logFunction != null) {
-        logFunction(logLevel, message);
+    if (message != null && message.length > 0) {
+        QuickLogger.logInfoEvent(message);
     }
 }
 
@@ -162,7 +161,7 @@ module.exports.parseURLRequest = function(url, listenUriList) {
     url = decodeURI(url);
     if (url != null && url.length > 0) {
         // brute force take anything after http or https
-        // TODO: regex pattern is '[\/|\?|&]http[s]?[:]?\/'
+        // TODO: regex pattern is '[\/|\?|&]http[s]?[:]?\/' we should consider that vs. the brute force method here.
         lookFor = '/https/';
         charDelimiter = url.indexOf(lookFor);
         if (charDelimiter >= 0) {
@@ -566,4 +565,40 @@ module.exports.buildURLFromReferrerRequestAndInfo = function(referrer, urlReques
         proxyRequest += '?' + urlRequestedParts.query;
     }
     return proxyRequest;
+};
+
+/**
+ * Combine the parameters from the request and the server url configuration where the parameters
+ * specified in the request will override any defined in the configuration, otherwise any parameters
+ * specified in either are combined.
+ * @param request - the node http/http request. It may also include parameters for the request.
+ * @param urlParts - the parsed url parts of the request
+ * @param serverURLInfo - the server url configuration matching the request. It may have its own parameters.
+ * @returns {object} - recombined parameters.
+ */
+module.exports.combineParameters = function(request, urlParts, serverURLInfo) {
+    var configuredParameters = {},
+        requestParameters = null,
+        key;
+
+    if (serverURLInfo.query !== undefined && serverURLInfo.query != null && serverURLInfo.query.length > 0) {
+        configuredParameters = ProjectUtilities.queryStringToObject(serverURLInfo.query);
+    }
+    if (request.method == 'GET') {
+        if (urlParts.query !== undefined && urlParts.query != null && urlParts.query.length > 0) {
+            requestParameters = urlParts.query;
+        }
+    } else if (request.method == 'POST') {
+        // TODO: If POST then where are the post params?
+        requestParameters = request.query;
+    }
+    if (requestParameters != null) {
+        requestParameters = ProjectUtilities.queryStringToObject(requestParameters);
+        for (key in requestParameters) {
+            if (requestParameters.hasOwnProperty(key)) {
+                configuredParameters[key] = requestParameters[key];
+            }
+        }
+    }
+    return configuredParameters;
 };

@@ -81,15 +81,15 @@ module.exports = function (serverURLs, allowedReferrers, logFunction) {
 
         if (dbConnection != null) {
             dbConnection.serialize(function() {
-                dbConnection.run('CREATE TABLE IF NOT EXISTS ips (id INTEGER PRIMARY KEY, url VARCHAR(255) not null, referrer VARCHAR(255) not null, count INTEGER not null default(0), rate INTEGER not null default(0), time INTEGER not null default(0), total INTEGER not null default(0))');
+                dbConnection.run('CREATE TABLE IF NOT EXISTS ips (id INTEGER PRIMARY KEY, url VARCHAR(255) not null, referrer VARCHAR(255) not null, count INTEGER not null default(0), rate INTEGER not null default(0), time INTEGER not null default(0), total INTEGER not null default(0), rejected INTEGER not null default(0))');
                 dbConnection.run('CREATE UNIQUE INDEX IF NOT EXISTS url_referrer ON ips (url, referrer)');
                 dbConnection.run('DELETE from ips');
-                sql = 'INSERT OR IGNORE INTO ips (url, referrer, count, rate, time, total) VALUES (?, ?, ?, ?, ?, ?)';
+                sql = 'INSERT OR IGNORE INTO ips (url, referrer, count, rate, time, total, rejected) VALUES (?, ?, ?, ?, ?, ?, ?)';
                 for (serverIndex = 0; serverIndex < serverURLConfig.length; serverIndex ++) {
                     serverURL = serverURLConfig[serverIndex];
                     if (serverURL.useRateMeter) {
                         for (referrerIndex = 0; referrerIndex < serverAllowedReferrers.length; referrerIndex ++) {
-                            params = [serverURL.url, serverAllowedReferrers[referrerIndex].referrer, 0, serverURL.rate, timeOfAccess, 0];
+                            params = [serverURL.url, serverAllowedReferrers[referrerIndex].referrer, 0, serverURL.rate, timeOfAccess, 0, 0];
                             dbConnection.run(sql, params);
                         }
                     }
@@ -117,12 +117,12 @@ module.exports = function (serverURLs, allowedReferrers, logFunction) {
         if (dbConnection != null) {
             dbConnection.serialize(function() {
                 dbConnection.run('TRUNCATE TABLE ips');
-                sql = 'INSERT OR IGNORE INTO ips (url, referrer, count, rate, time, total) VALUES (?, ?, ?, ?, ?, ?)';
+                sql = 'INSERT OR IGNORE INTO ips (url, referrer, count, rate, time, total, rejected) VALUES (?, ?, ?, ?, ?, ?, ?)';
                 for (serverIndex = 0; serverIndex < newServerUrlTable.length; serverIndex ++) {
                     serverURL = newServerUrlTable[serverIndex];
                     if (serverURL.useRateMeter) {
                         for (referrerIndex = 0; referrerIndex < newReferrers.length; referrerIndex ++) {
-                            params = [serverURL.url, newReferrers[referrerIndex], 0, serverURL.rate, timeOfAccess, 0];
+                            params = [serverURL.url, newReferrers[referrerIndex], 0, serverURL.rate, timeOfAccess, 0, 0];
                             dbConnection.run(sql, params);
                         }
                     }
@@ -208,7 +208,7 @@ module.exports = function (serverURLs, allowedReferrers, logFunction) {
                 openDatabase();
             }
             if (dbConnection != null) {
-                sql = "SELECT id, url, referrer, total, count, rate, time FROM ips";
+                sql = "SELECT id, url, referrer, total, count, rejected, rate, time FROM ips";
                 params = [];
                 dbConnection.all(sql, params, function (error, queryResult) {
                     if (error != null) {
@@ -274,6 +274,14 @@ module.exports = function (serverURLs, allowedReferrers, logFunction) {
                                 if (isOK) {
                                     sql = "UPDATE ips SET total=total+1, count=?, time=? WHERE id=?";
                                     params = [newCount, refreshTime, queryResult.id];
+                                    dbConnection.run(sql, params, function (error) {
+                                        if (error != null) {
+                                            logDatabaseError('updateRequest', sql, params, error);
+                                        }
+                                    });
+                                } else {
+                                    sql = "UPDATE ips SET rejected=rejected+1 WHERE id=?";
+                                    params = [queryResult.id];
                                     dbConnection.run(sql, params, function (error) {
                                         if (error != null) {
                                             logDatabaseError('updateRequest', sql, params, error);

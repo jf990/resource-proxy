@@ -81,7 +81,7 @@ module.exports.getIfPropertySet = function(object, key, defaultValue) {
  * @returns {object} return the object
  */
 module.exports.addIfPropertyNotSet = function(object, key, value) {
-    if (object[key] === undefined || object[key].toString().trim().length == 0) {
+    if (object[key] === undefined || object[key] == null || object[key].toString().trim().length == 0) {
         object[key] = value;
     }
     return object;
@@ -99,7 +99,7 @@ module.exports.queryStringToObject = function(urlParameterString) {
     var match,
         search = /([^&=]+)=?([^&]*)/g,
         decode = function (s) {
-            return decodeURIComponent(s.replace(/\+/g, " "));
+            return decodeURIComponent(s.replace(/\+/g, ' '));
         },
         result = {};
     if (urlParameterString.charAt(0) == '?') {
@@ -113,7 +113,7 @@ module.exports.queryStringToObject = function(urlParameterString) {
 
 /**
  * Return the query string representation of an object with key/value pairs converted to string.
- * Does not handle recursion, but will flaten an array. Values are url encoded. ? is not added to the result.
+ * Does not handle recursion, but will flatten an array. Values are url encoded. ? is not added to the result.
  *
  * @method objectToQueryString
  * @param {object} object The object of key/value pairs.
@@ -136,6 +136,7 @@ module.exports.objectToQueryString = function(object) {
                     value = value.toString();
                 }
                 value = encodeURIComponent(value);
+                key = encodeURIComponent(key);
                 urlParameterString += (urlParameterString.length == 0 ? '' : '&') + key + '=' + value;
             }
         }
@@ -229,4 +230,14 @@ module.exports.findNumberAfterTokenInString = function(source, token) {
         }
     }
     return value;
+};
+
+/**
+ * Return true if the file name appears to be a json file type (because it ends with .json).
+ * @param fileName
+ * @returns {boolean}
+ */
+module.exports.isFileTypeJson = function (fileName) {
+    var regex = /\.json$/i;
+    return regex.test(fileName, 'i');
 };

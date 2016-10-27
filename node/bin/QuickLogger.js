@@ -5,10 +5,10 @@
 
 const fs = require('fs');
 
-var defaultLogFileName = 'arcgis-proxy.txt';
-var logFileName;
-var logToConsole;
-var logLevelValue = 3;
+var defaultLogFileName = 'arcgis-proxy.txt',
+    logFileName = 'arcgis-proxy-node.log',
+    logToConsole = true,
+    logLevelValue = 9;
 
 
 // LOGLEVELs control what type of logging will appear in the log file and on the console.
@@ -122,7 +122,7 @@ module.exports.logErrorEvent = function(message) {
 module.exports.logEvent = function(logLevelForMessage, message) {
     if (logLevelForMessage <= logLevelValue) {
         if (logFileName != null) {
-            fs.appendFile(logFileName, this.formatLogMessage(this.formatLogLevelKey(logLevelValue) + message), function (error) {
+            fs.appendFile(logFileName, this.formatLogMessage(this.formatLogLevelKey(logLevelForMessage) + message), {flag: 'a'}, function (error) {
                 if (error != null) {
                     console.log('*** Error writing to log file ' + logFileName + ": " + error.toString());
                     throw error;
@@ -216,3 +216,26 @@ module.exports.logEventImmediately = function(logLevelForMessage, message) {
     }
 };
 
+/**
+ * Return size of the log file.
+ */
+module.exports.getLogFileSize = function() {
+    var fstatus,
+        result;
+
+    try {
+        if (logFileName != null) {
+            fstatus = fs.statSync(logFileName);
+            if (fstatus != null) {
+                result = Math.round(fstatus.size / 1000) + 'K';
+            } else {
+                result = 'Log file error.';
+            }
+        } else {
+            result = 'No log file.';
+        }
+    } catch (exception) {
+        result = 'Log file error ' + exception.toLocaleString();
+    }
+    return result;
+};

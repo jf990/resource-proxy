@@ -26,9 +26,13 @@
     "main": "bin/proxy.js",
     "private": false,
     "dependencies": {
+        "bufferhelper": "latest",
         "http-proxy": "latest",
         "load-json-file": "^2.0.0",
-        "sqlite3": "latest"
+        "os": "latest",
+        "path.join": "latest",
+        "sqlite3": "latest",
+        "xml2js": "^0.4.17"
     },
     "devDependencies": {
     },
